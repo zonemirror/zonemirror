@@ -1,0 +1,17 @@
+{
+  "name": "host/cpanel-cloudflare-sync",
+  "description": "cPanel plugin to sync DNS changes to Cloudflare.",
+  "type": "project",
+  "license": "MIT",
+  "require": {
+    "php": ">=7.4",
+    "ext-curl": "*",
+    "ext-json": "*",
+    "ext-pdo_sqlite": "*"
+  },
+  "autoload": {
+    "psr-4": {
+      "CfSync\\": "plugin/"
+    }
+  }
+}
