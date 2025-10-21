@@ -4,12 +4,12 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/php /usr/local/cpanel/3rdparty/cf-sync/worker/cf-syncd.php
+ExecStart=/usr/bin/php /usr/local/cpanel/3rdparty/cloudflare-dns-sync/worker/cf-syncd.php
 Restart=always
 RestartSec=2
-StandardOutput=append:/var/log/cf-sync/agent.log
-StandardError=append:/var/log/cf-sync/agent.log
 User=root
+StandardOutput=append:/var/log/cloudflare-dns-sync/agent.log
+StandardError=append:/var/log/cloudflare-dns-sync/agent.log
 
 [Install]
 WantedBy=multi-user.target

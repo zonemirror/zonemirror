@@ -1,27 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PREFIX="/usr/local/cpanel/3rdparty/cf-sync"
+PLUGIN_ID="cloudflare-dns-sync"
+PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
+THEME_PATH="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
+SERVICE_PATH="/etc/systemd/system/${PLUGIN_ID}d.service"
 
-# Unregister plugin UI link
-rm -f /usr/local/cpanel/base/frontend/jupiter/cloudflare-sync/index.php || true
-rmdir --ignore-fail-on-non-empty /usr/local/cpanel/base/frontend/jupiter/cloudflare-sync || true
+echo "🧹 Uninstalling Cloudflare DNS Sync..."
 
-# Unregister hooks
-/usr/local/cpanel/bin/manage_hooks list | awk '/cf-sync/ && /script/ {print $1}' | while read -r HOOKID; do
-  /usr/local/cpanel/bin/manage_hooks delete id "$HOOKID" || true
-done
+systemctl disable --now "${PLUGIN_ID}d" || true
+/usr/local/cpanel/bin/unregister_cpanelplugin "${PREFIX}/cloudflare_sync.cpanelplugin" || true
 
-# Stop and disable service
-systemctl disable --now cf-syncd || true
-rm -f /etc/systemd/system/cf-syncd.service || true
-systemctl daemon-reload || true
+rm -rf "$PREFIX" "$THEME_PATH" "$SERVICE_PATH"
+systemctl daemon-reload
 
-# Remove installed files (keep user configs unless --purge)
-if [[ "${1:-}" == "--purge" ]]; then
-  rm -rf "$PREFIX" /var/log/cf-sync || true
-else
-  rm -rf "$PREFIX" || true
-fi
-
-echo "Uninstalled Cloudflare DNS Sync plugin."
+echo "✅ Uninstallation complete."
