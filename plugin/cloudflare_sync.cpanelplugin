@@ -5,4 +5,4 @@ featurelist=default
 theme=jupiter
 group=domains
 accesstype=user
-item=Cloudflare DNS Sync:/usr/local/cpanel/base/frontend/jupiter/cloudflare-sync/index.php
+item=Cloudflare DNS Sync:/usr/local/cpanel/base/frontend/jupiter/cloudflare-dns-sync/index.php
