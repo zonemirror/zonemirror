@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+CMD="${1:-status}"
+DB="${HOME}/.cf-sync/events.sqlite"
+
+case "$CMD" in
+  status)
+    echo "Queue entries:" $(sqlite3 "$DB" 'select count(*) from events' 2>/dev/null || echo 0)
+    ;;
+  ls)
+    sqlite3 "$DB" 'select id,domain,action,attempts,next_run_at from events order by id limit 50' || true
+    ;;
+  retry)
+    ID="${2:-}"
+    [[ -z "$ID" ]] && { echo "Usage: cf-syncctl retry <id>"; exit 1; }
+    sqlite3 "$DB" "update events set next_run_at=strftime('%s','now') where id=$ID" || true
+    ;;
+  flush)
+    sqlite3 "$DB" 'delete from events' || true
+    ;;
+  tail)
+    tail -n 200 -f /var/log/cf-sync/agent.log
+    ;;
+  doctor)
+    php -v
+    sqlite3 --version || echo "sqlite3 not found"
+    ;;
+  *)
+    echo "Usage: cf-syncctl [status|ls|retry <id>|flush|tail|doctor]"
+    ;;
+ esac

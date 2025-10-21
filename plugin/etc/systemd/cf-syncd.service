@@ -1,0 +1,15 @@
+[Unit]
+Description=Cloudflare DNS Sync Worker
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/php /usr/local/cpanel/3rdparty/cf-sync/worker/cf-syncd.php
+Restart=always
+RestartSec=2
+StandardOutput=append:/var/log/cf-sync/agent.log
+StandardError=append:/var/log/cf-sync/agent.log
+User=root
+
+[Install]
+WantedBy=multi-user.target
