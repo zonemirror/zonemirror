@@ -9,7 +9,7 @@ SERVICE_PATH="/etc/systemd/system/${PLUGIN_ID}d.service"
 echo "🧹 Uninstalling Cloudflare DNS Sync..."
 
 systemctl disable --now "${PLUGIN_ID}d" || true
-/usr/local/cpanel/bin/unregister_cpanelplugin "${PREFIX}/cloudflare_sync.cpanelplugin" || true
+/usr/local/cpanel/bin/unregister_cpanelplugin "${PREFIX}/cloudflare_dns_sync.cpanelplugin" || true
 
 rm -rf "$PREFIX" "$THEME_PATH" "$SERVICE_PATH"
 systemctl daemon-reload

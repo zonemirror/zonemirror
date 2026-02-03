@@ -35,6 +35,42 @@ cpanel-cloudflare-sync/
 - Autoload via Composer PSR-4
 - Unit tests under `tests/`
 
+### Formatting
+This repo provides language-specific formatters:
+
+- PHP: PHP-CS-Fixer (`composer`)
+- Shell (`*.sh`, install/uninstall, `plugin/bin/*`): `shfmt`
+- JS/CSS/JSON/MD/YAML: Prettier
+
+Install tooling:
+
+```bash
+composer install
+# optional (for prettier)
+npm install
+# shfmt (macOS):
+brew install shfmt
+```
+
+Run all formatters:
+
+```bash
+make format
+```
+
+Run individually:
+
+```bash
+# PHP
+composer run format:php
+
+# Shell
+bash scripts/format-sh.sh --write
+
+# Prettier (JS/CSS/JSON/MD/YAML)
+npm run format:prettier
+```
+
 ## Security
 - Uses API Tokens (least privilege) — not Global API Key
 - Token encrypted at rest under `~/.cf-sync/config.json`

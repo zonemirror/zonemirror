@@ -1,0 +1,25 @@
+{
+  "name": "cloudflare-cpanel-formatting",
+  "private": true,
+  "devDependencies": {
+    "prettier": "^3.8.1"
+  },
+  "scripts": {
+    "format:prettier": "prettier --write \"**/*.{js,css,scss,md,json,yaml,yml}\"",
+    "lint:prettier": "prettier --check \"**/*.{js,css,scss,md,json,yaml,yml}\""
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -6,3 +6,10 @@ theme=jupiter
 group=domains
 accesstype=user
 item=Cloudflare DNS Sync:/usr/local/cpanel/base/frontend/jupiter/cloudflare-dns-sync/index.php
+
+
+
+
+
+
+
