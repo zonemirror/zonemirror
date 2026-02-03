@@ -9,9 +9,16 @@
     "ext-json": "*",
     "ext-pdo_sqlite": "*"
   },
+  "require-dev": {
+    "friendsofphp/php-cs-fixer": "^3.64"
+  },
   "autoload": {
     "psr-4": {
       "CfSync\\": "plugin/"
     }
+  },
+  "scripts": {
+    "format:php": "php-cs-fixer fix --config=.php-cs-fixer.php --allow-risky=yes",
+    "lint:php": "php-cs-fixer fix --config=.php-cs-fixer.php --allow-risky=yes --dry-run --using-cache=no --diff"
   }
 }

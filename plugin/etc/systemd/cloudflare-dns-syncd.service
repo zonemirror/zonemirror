@@ -13,3 +13,10 @@ StandardError=append:/var/log/cloudflare-dns-sync/agent.log
 
 [Install]
 WantedBy=multi-user.target
+
+
+
+
+
+
+

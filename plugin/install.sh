@@ -34,7 +34,7 @@ systemctl enable --now "${PLUGIN_ID}d"
 echo "✅ Service ${PLUGIN_ID}d enabled and started."
 
 # 6️⃣ Register cPanel plugin
-/usr/local/cpanel/bin/register_cpanelplugin "$PREFIX/cloudflare_sync.cpanelplugin" || true
+/usr/local/cpanel/bin/register_cpanelplugin "$PREFIX/cloudflare_dns_sync.cpanelplugin" || true
 echo "✅ Registered plugin with cPanel."
 
 # 7️⃣ Set correct ownership & permissions
