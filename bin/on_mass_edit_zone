@@ -1,0 +1,51 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * mass_edit_zone fires once with an array of record edits. We fan them out
+ * to per-record upserts so the queue stays one-event-per-record (matches the
+ * idempotency-key contract used elsewhere).
+ */
+
+use CfSync\Domain\EventAction;
+use CfSync\Interface\Hook\HookHandler;
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (!is_file($autoload)) {
+    exit(0);
+}
+require $autoload;
+
+$raw = stream_get_contents(STDIN);
+$payload = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+$user = (string) (posix_getpwuid(posix_geteuid())['name'] ?? '');
+
+if (!is_array($payload)) {
+    exit(0);
+}
+
+$data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+$resultData = is_array($data['result']['data'] ?? null) ? $data['result']['data'] : [];
+$args = is_array($data['args'] ?? null) ? $data['args'] : [];
+
+$handler = new HookHandler(EventAction::Upsert, 'ZoneEdit::mass_edit_zone');
+
+if (isset($resultData[0]) && is_array($resultData[0])) {
+    foreach ($resultData as $record) {
+        if (!is_array($record)) {
+            continue;
+        }
+        $sub = [
+            'data' => [
+                'args' => $args,
+                'result' => ['data' => $record],
+            ],
+        ];
+        $handler->handle($sub, $user);
+    }
+} else {
+    $handler->handle($payload, $user);
+}
+exit(0);

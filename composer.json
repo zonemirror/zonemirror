@@ -1,24 +1,66 @@
 {
-  "name": "host/cpanel-cloudflare-sync",
-  "description": "cPanel plugin to sync DNS changes to Cloudflare.",
+  "name": "busirocket/cpanel-cloudflare-dns-sync",
+  "description": "cPanel plugin that syncs DNS changes from cPanel Zone Editor to Cloudflare in real time.",
   "type": "project",
   "license": "MIT",
+  "keywords": [
+    "cpanel",
+    "whm",
+    "cloudflare",
+    "dns",
+    "sync",
+    "plugin",
+    "hooks"
+  ],
+  "authors": [
+    {
+      "name": "BusiRocket",
+      "homepage": "https://github.com/BusiRocket"
+    }
+  ],
   "require": {
-    "php": ">=7.4",
+    "php": ">=8.1",
     "ext-curl": "*",
     "ext-json": "*",
-    "ext-pdo_sqlite": "*"
+    "ext-pdo": "*",
+    "ext-pdo_sqlite": "*",
+    "ext-openssl": "*"
   },
   "require-dev": {
-    "friendsofphp/php-cs-fixer": "^3.64"
+    "phpunit/phpunit": "^10.5",
+    "friendsofphp/php-cs-fixer": "^3.64",
+    "phpstan/phpstan": "^1.12",
+    "phpstan/phpstan-strict-rules": "^1.6"
+  },
+  "suggest": {
+    "ext-sodium": "Preferred AEAD cipher (XChaCha20-Poly1305) for token-at-rest encryption."
   },
   "autoload": {
     "psr-4": {
-      "CfSync\\": "plugin/"
+      "CfSync\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "CfSync\\Tests\\": "tests/"
     }
   },
   "scripts": {
+    "test": "phpunit --colors=always",
+    "test:coverage": "phpunit --colors=always --coverage-text --coverage-clover=coverage.xml",
+    "analyse": "phpstan analyse --memory-limit=512M",
     "format:php": "php-cs-fixer fix --config=.php-cs-fixer.php --allow-risky=yes",
-    "lint:php": "php-cs-fixer fix --config=.php-cs-fixer.php --allow-risky=yes --dry-run --using-cache=no --diff"
-  }
+    "lint:php": "php-cs-fixer fix --config=.php-cs-fixer.php --allow-risky=yes --dry-run --using-cache=no --diff",
+    "check": [
+      "@lint:php",
+      "@analyse",
+      "@test"
+    ]
+  },
+  "config": {
+    "sort-packages": true,
+    "optimize-autoloader": true,
+    "preferred-install": "dist"
+  },
+  "minimum-stability": "stable"
 }

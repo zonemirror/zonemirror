@@ -1,0 +1,23 @@
+{
+  "id": "cloudflare-dns-sync",
+  "name": "Cloudflare DNS Sync",
+  "name_localizable": "Cloudflare DNS Sync",
+  "vendor": "BusiRocket",
+  "url": "https://github.com/BusiRocket/cpanel-cloudflare-dns-sync",
+  "items": [
+    {
+      "type": "link",
+      "id": "cloudflare-dns-sync-user",
+      "implementer": "/usr/local/cpanel/3rdparty/cloudflare-dns-sync/resources/cpanel/index.live.php",
+      "name": "Cloudflare DNS Sync",
+      "name_localizable": "Cloudflare DNS Sync",
+      "description": "Sync DNS Zone Editor changes to Cloudflare in real time.",
+      "feature": "cloudflare-dns-sync",
+      "group_id": "domains",
+      "order": 50,
+      "icon": "/cPanel_magic_revision_0/unprotected/cloudflare-dns-sync/icon.png",
+      "uri": "cloudflare-dns-sync/index.live.php",
+      "target": "_self"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+[Unit]
+Description=Cloudflare DNS Sync background worker
+After=network-online.target cpanel.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/local/cpanel/3rdparty/cloudflare-dns-sync/bin/cf-syncd
+Restart=on-failure
+RestartSec=5s
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/var/cpanel/cloudflare-dns-sync /var/log /home /root
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
