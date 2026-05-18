@@ -1,0 +1,19 @@
+includes:
+  - vendor/phpstan/phpstan-strict-rules/rules.neon
+
+parameters:
+  level: 8
+  paths:
+    - src
+    - bin
+    - tests
+  excludePaths:
+    - vendor
+  treatPhpDocTypesAsCertain: false
+  reportUnmatchedIgnoredErrors: true
+  ignoreErrors:
+    # The $stop flag is mutated by a pcntl_signal handler attached at runtime.
+    # PHPStan cannot model that, so loop-narrowing reports "always false".
+    -
+      message: '#If condition is always false#'
+      path: src/Interface/Worker/WorkerLoop.php

@@ -1,0 +1,20 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+use CfSync\Domain\EventAction;
+use CfSync\Interface\Hook\HookHandler;
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (!is_file($autoload)) {
+    exit(0); // Never crash cPanel hooks.
+}
+require $autoload;
+
+$raw = stream_get_contents(STDIN);
+$payload = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+$user = (string) (posix_getpwuid(posix_geteuid())['name'] ?? '');
+
+(new HookHandler(EventAction::Upsert, 'ZoneEdit::add_zone_record'))->handle(is_array($payload) ? $payload : [], $user);
+exit(0);

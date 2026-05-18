@@ -1,0 +1,26 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Daemon entry point. Supervised by systemd. Runs as root so it can read
+ * every enrolled user's queue and config. Reads no command-line input; all
+ * configuration lives under /var/cpanel/cloudflare-dns-sync/.
+ */
+
+use CfSync\Infrastructure\Logging\FileLogger;
+use CfSync\Infrastructure\Logging\LogLevel;
+use CfSync\Infrastructure\Storage\Paths;
+use CfSync\Interface\Worker\WorkerLoop;
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (!is_file($autoload)) {
+    fwrite(STDERR, "vendor/autoload.php not found. Run `composer install --no-dev -o`.\n");
+    exit(2);
+}
+require $autoload;
+
+$logger = new FileLogger(Paths::logFile(), LogLevel::Info);
+$loop = new WorkerLoop($logger);
+exit($loop->run());

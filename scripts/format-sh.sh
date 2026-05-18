@@ -18,8 +18,8 @@ if ! command -v shfmt >/dev/null 2>&1; then
   exit 1
 fi
 
-mapfile -t FILES < <(find "$ROOT_DIR" -type f \( -name "*.sh" -o -path "$ROOT_DIR/plugin/bin/*" -o -name "install.sh" -o -name "uninstall.sh" \) \
-  -not -path "$ROOT_DIR/vendor/*" -not -path "$ROOT_DIR/node_modules/*")
+mapfile -t FILES < <(find "$ROOT_DIR" -type f \( -name "*.sh" -o -path "$ROOT_DIR/bin/*" \) \
+  -not -path "$ROOT_DIR/vendor/*" -not -path "$ROOT_DIR/node_modules/*" -not -path "$ROOT_DIR/dist/*")
 
 if [[ ${#FILES[@]} -eq 0 ]]; then
   echo "No shell files found to format."
