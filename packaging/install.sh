@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs the Cloudflare DNS Sync plugin on a cPanel/WHM server.
-# Requires: root, cPanel >= 108, PHP >= 8.1.
-# Idempotent: re-running upgrades in place.
+# Installs (or upgrades) the Cloudflare DNS Sync plugin on a cPanel/WHM
+# server. Requires: root, cPanel >= 108, PHP >= 8.1. Safe to re-run.
 
 PLUGIN_ID="cloudflare-dns-sync"
 PLUGIN_NAME="Cloudflare DNS Sync"
@@ -11,9 +10,12 @@ PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
 SYSTEM_DIR="/var/cpanel/${PLUGIN_ID}"
 SERVICE_NAME="${PLUGIN_ID}d"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}.service"
+UPDATER_SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.service"
+UPDATER_TIMER_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.timer"
 LIVEAPI_DIR="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
 WHM_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/${PLUGIN_ID}"
 ICON_TARGET_DIR="/usr/local/cpanel/base/unprotected/${PLUGIN_ID}"
+CLI_SYMLINK="/usr/local/bin/cfsync"
 
 require_root() {
   if [[ $EUID -ne 0 ]]; then
@@ -81,12 +83,24 @@ register_hooks() {
 
 install_service() {
   install -m 0644 "$PREFIX/packaging/systemd/${SERVICE_NAME}.service" "$SERVICE_PATH"
+  install -m 0644 "$PREFIX/packaging/systemd/${SERVICE_NAME}-updater.service" "$UPDATER_SERVICE_PATH"
+  install -m 0644 "$PREFIX/packaging/systemd/${SERVICE_NAME}-updater.timer" "$UPDATER_TIMER_PATH"
   systemctl daemon-reload
   systemctl enable --now "$SERVICE_NAME"
+  # Updater timer is NOT enabled by default — operators opt in via:
+  #   sudo cfsync auto-update on
+  # If it was previously enabled, keep it running across upgrades.
+  if systemctl --quiet is-enabled "${SERVICE_NAME}-updater.timer" 2>/dev/null; then
+    systemctl restart "${SERVICE_NAME}-updater.timer" || true
+  fi
 }
 
 register_plugin() {
   /usr/local/cpanel/bin/register_cpanelplugin "$PREFIX/packaging/cloudflare_dns_sync.cpanelplugin" || true
+}
+
+install_cli() {
+  ln -sfn "$PREFIX/bin/cfsync" "$CLI_SYMLINK"
 }
 
 fix_permissions() {
@@ -97,25 +111,34 @@ fix_permissions() {
   chmod 0700 "$SYSTEM_DIR" "$SYSTEM_DIR/logs"
 }
 
+print_summary() {
+  local ver="unknown"
+  [[ -f "$PREFIX/VERSION" ]] && ver="$(tr -d '[:space:]' < "$PREFIX/VERSION")"
+  echo
+  echo "Installed Cloudflare DNS Sync v${ver}."
+  echo " - cPanel UI       : Domains -> ${PLUGIN_NAME}"
+  echo " - WHM UI          : Plugins -> ${PLUGIN_NAME}"
+  echo " - Daemon          : systemctl status ${SERVICE_NAME}"
+  echo " - Logs            : ${SYSTEM_DIR}/logs/cf-sync.log"
+  echo " - CLI             : cfsync help"
+  echo " - Auto-update     : sudo cfsync auto-update on   (off by default)"
+  echo " - Manual update   : sudo cfsync update"
+}
+
 main() {
   require_root
   require_cpanel
   require_php
 
-  echo "==> Installing $PLUGIN_NAME"
+  echo "==> Installing ${PLUGIN_NAME}"
   stage_files
   install_composer_deps
   fix_permissions
   register_hooks
   install_service
+  install_cli
   register_plugin
-
-  echo
-  echo "Installed."
-  echo " - cPanel UI : Domains -> $PLUGIN_NAME"
-  echo " - WHM UI    : Plugins -> $PLUGIN_NAME"
-  echo " - Daemon    : systemctl status $SERVICE_NAME"
-  echo " - Logs      : $SYSTEM_DIR/logs/cf-sync.log"
+  print_summary
 }
 
 main "$@"

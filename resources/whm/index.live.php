@@ -35,14 +35,23 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
     .card { max-width: 820px; margin: 1.5rem auto; padding: 1rem 1.25rem; border: 1px solid #ddd; border-radius: 6px; }
     .err { color: #b00; }
     .ok { color: #060; }
+    .muted { color: #666; font-size: 0.9em; }
     fieldset { margin-bottom: 1rem; }
     textarea { width: 100%; min-height: 120px; font-family: monospace; }
     input[type=number] { width: 6em; }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef; color: #336; font-size: 0.85em; }
   </style>
 </head>
 <body>
 <div class="card">
-  <h2>Cloudflare DNS Sync — Administration</h2>
+  <h2>Cloudflare DNS Sync — Administration
+    <span class="pill" title="Installed plugin version">v<?= $h($vm['installed_version']) ?></span>
+  </h2>
+  <p class="muted">
+    Updates: <code>sudo cfsync check</code> compares with the latest GitHub release.
+    Auto-update: <code>sudo cfsync auto-update on</code> enables the daily systemd timer.
+  </p>
+
   <?php if ($vm['saved']): ?>
     <p class="ok">Settings saved.</p>
   <?php endif; ?>

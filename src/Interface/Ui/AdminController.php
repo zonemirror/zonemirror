@@ -6,6 +6,7 @@ namespace CfSync\Interface\Ui;
 
 use CfSync\Infrastructure\Storage\EnrolledUsers;
 use CfSync\Infrastructure\Storage\SystemConfigStorage;
+use CfSync\Infrastructure\Version\VersionReader;
 
 /**
  * WHM admin view-model: global defaults, allowlist, dry-run kill switch.
@@ -20,7 +21,8 @@ use CfSync\Infrastructure\Storage\SystemConfigStorage;
  *     allowed_users_list: string,
  *     rate_limit_rps: int,
  *     dry_run: bool,
- *     enrolled: list<string>
+ *     enrolled: list<string>,
+ *     installed_version: string
  * }
  */
 final class AdminController
@@ -66,6 +68,7 @@ final class AdminController
             'rate_limit_rps' => $cfg['rate_limit_rps'],
             'dry_run' => $cfg['dry_run'],
             'enrolled' => $this->enrolled->all(),
+            'installed_version' => VersionReader::installed(),
         ];
     }
 
