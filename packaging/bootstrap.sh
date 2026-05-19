@@ -112,7 +112,11 @@ extract_and_link() {
 prune_old_releases() {
   # Keep the 3 most recent releases for rollback.
   local kept=3
-  mapfile -t dirs < <(ls -1dt "$RELEASES"/*/ 2>/dev/null | sed 's:/$::')
+  mapfile -t dirs < <(
+    find "$RELEASES" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null \
+      | sort -rn \
+      | cut -d' ' -f2-
+  )
   if (( ${#dirs[@]} <= kept )); then return; fi
   for ((i=kept; i<${#dirs[@]}; i++)); do
     log "Pruning old release: ${dirs[$i]}"

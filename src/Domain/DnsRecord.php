@@ -13,19 +13,19 @@ namespace CfSync\Domain;
  *
  * @phpstan-type RecordData array<string, scalar|null>
  */
-final readonly class DnsRecord
+final class DnsRecord
 {
     /**
      * @param array<string, mixed> $data Cloudflare structured data (SRV, CAA).
      */
     public function __construct(
-        public RecordType $type,
-        public string $name,
-        public ?string $content,
-        public int $ttl,
-        public ?int $priority,
-        public ?bool $proxied,
-        public array $data,
+        public readonly RecordType $type,
+        public readonly string $name,
+        public readonly ?string $content,
+        public readonly int $ttl,
+        public readonly ?int $priority,
+        public readonly ?bool $proxied,
+        public readonly array $data,
     ) {
     }
 
