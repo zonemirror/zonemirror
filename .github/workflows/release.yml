@@ -16,6 +16,12 @@ jobs:
           php-version: '8.1'
           extensions: curl, json, pdo_sqlite, openssl
           tools: composer:v2
+      - name: Sync VERSION file to tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION="${REF_NAME#v}"
+          echo "$VERSION" > VERSION
       - name: Install runtime dependencies
         run: composer install --no-interaction --no-dev --prefer-dist --optimize-autoloader
       - name: Create tarball

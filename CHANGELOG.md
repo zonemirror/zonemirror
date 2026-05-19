@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- One-line installer (`packaging/bootstrap.sh`) — curl-able from GitHub raw,
+  resolves the latest release tag, verifies SHA-256, stages under
+  `/opt/cloudflare-dns-sync/releases/<version>/`, swaps the
+  `/opt/cloudflare-dns-sync/current` symlink, and hands off to
+  `packaging/install.sh`.
+- `cfsync` operator CLI installed to `/usr/local/bin/cfsync`. Subcommands:
+  `version`, `check`, `update [--dry-run]`, `status`, `auto-update on|off`,
+  `logs [-n N]`, `help`.
+- Auto-update systemd timer
+  (`cloudflare-dns-syncd-updater.{service,timer}`) — disabled by default,
+  enabled with `sudo cfsync auto-update on`. Daily with 0-3 h randomized
+  delay; persistent across boots; honors release-tarball SHA-256.
+- `VERSION` file at the repo root as the single source of truth; release
+  workflow rewrites it to the git tag at build time.
+- `VersionReader` infrastructure component, surfaced on the WHM admin UI
+  as a version pill next to the page title.
+- README rewritten: one-liner install, comparison table, mermaid flow
+  diagram, configuration reference, diagnostics quick-ref, FAQ, roadmap.
+
+### Added (initial release)
 - Hybrid WHM-admin + cPanel-user configuration model with allowlist and
   dry-run kill switch.
 - Per-user SQLite event queue with WAL journaling, atomic claim, idempotency
