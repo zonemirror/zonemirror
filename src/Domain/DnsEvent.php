@@ -9,14 +9,14 @@ namespace CfSync\Domain;
  * Cloudflare. Immutable. Identified by a deterministic idempotency key so
  * duplicate hooks (e.g. retries) collapse into a single Cloudflare call.
  */
-final readonly class DnsEvent
+final class DnsEvent
 {
     public function __construct(
-        public string $domain,
-        public EventAction $action,
-        public DnsRecord $record,
-        public string $idempotencyKey,
-        public int $createdAt,
+        public readonly string $domain,
+        public readonly EventAction $action,
+        public readonly DnsRecord $record,
+        public readonly string $idempotencyKey,
+        public readonly int $createdAt,
     ) {
     }
 }

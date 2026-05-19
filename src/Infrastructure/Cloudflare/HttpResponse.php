@@ -8,16 +8,16 @@ namespace CfSync\Infrastructure\Cloudflare;
  * Plain immutable container for a parsed Cloudflare HTTP response, including
  * the bits we need to honour rate-limit hints from the server.
  */
-final readonly class HttpResponse
+final class HttpResponse
 {
     /**
      * @param array<string, mixed> $body
      */
     public function __construct(
-        public int $status,
-        public array $body,
-        public ?int $retryAfterSeconds,
-        public ?int $rateLimitRemaining,
+        public readonly int $status,
+        public readonly array $body,
+        public readonly ?int $retryAfterSeconds,
+        public readonly ?int $rateLimitRemaining,
     ) {
     }
 

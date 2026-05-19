@@ -62,31 +62,28 @@ WorkerLoop::run                  ← systemd-supervised, runs as root
 
 ## Filesystem map
 
-| Path                                                  | Owner         | Mode  | Purpose                                  |
-| ----------------------------------------------------- | ------------- | ----- | ---------------------------------------- |
-| `/usr/local/cpanel/3rdparty/cloudflare-dns-sync/`     | root:root     | 0755  | Plugin code + vendor/                    |
-| `/var/cpanel/cloudflare-dns-sync/system.json`         | root:root     | 0600  | WHM-admin defaults                       |
-| `/var/cpanel/cloudflare-dns-sync/master.key`          | root:root     | 0600  | 32-byte token-encryption key             |
-| `/var/cpanel/cloudflare-dns-sync/enrolled-users`      | root:root     | 0644  | Newline-separated list of opted-in users |
-| `/var/cpanel/cloudflare-dns-sync/logs/cf-sync.log`    | root:root     | 0640  | JSON-lines log (token-redacted)          |
-| `/home/<user>/.cloudflare-dns-sync/config.json`       | `<user>`      | 0600  | Per-user settings + encrypted token      |
-| `/home/<user>/.cloudflare-dns-sync/queue.sqlite`      | `<user>`      | 0600  | Per-user pending DNS events              |
-| `/etc/systemd/system/cloudflare-dns-syncd.service`    | root:root     | 0644  | systemd unit                             |
+| Path                                               | Owner     | Mode | Purpose                                  |
+| -------------------------------------------------- | --------- | ---- | ---------------------------------------- |
+| `/usr/local/cpanel/3rdparty/cloudflare-dns-sync/`  | root:root | 0755 | Plugin code + vendor/                    |
+| `/var/cpanel/cloudflare-dns-sync/system.json`      | root:root | 0600 | WHM-admin defaults                       |
+| `/var/cpanel/cloudflare-dns-sync/master.key`       | root:root | 0600 | 32-byte token-encryption key             |
+| `/var/cpanel/cloudflare-dns-sync/enrolled-users`   | root:root | 0644 | Newline-separated list of opted-in users |
+| `/var/cpanel/cloudflare-dns-sync/logs/cf-sync.log` | root:root | 0640 | JSON-lines log (token-redacted)          |
+| `/home/<user>/.cloudflare-dns-sync/config.json`    | `<user>`  | 0600 | Per-user settings + encrypted token      |
+| `/home/<user>/.cloudflare-dns-sync/queue.sqlite`   | `<user>`  | 0600 | Per-user pending DNS events              |
+| `/etc/systemd/system/cloudflare-dns-syncd.service` | root:root | 0644 | systemd unit                             |
 
 ## Why these design choices
 
-- **Per-user queue** (instead of one shared DB) isolates one user's failures
-  from another's and lets hooks write to their own queue without elevating to
-  root.
-- **WAL journaling + BEGIN IMMEDIATE** lets the root worker and per-user
-  hooks share the file safely; SQLite has no `SELECT FOR UPDATE`, so claim is
-  expressed as an immediate-mode transaction with a visibility timeout.
-- **Idempotency keys** built from `(action, domain, type, name, content,
-  priority, port)` collapse duplicate hook fires (cPanel sometimes retries
-  on transient hook errors).
-- **Mapping is the only place that knows the cPanel payload shape.** All
-  later layers consume `DnsRecord`, so adding a new transport upstream only
-  touches `CpanelToCloudflareMapper`.
+- **Per-user queue** (instead of one shared DB) isolates one user's failures from another's and lets
+  hooks write to their own queue without elevating to root.
+- **WAL journaling + BEGIN IMMEDIATE** lets the root worker and per-user hooks share the file
+  safely; SQLite has no `SELECT FOR UPDATE`, so claim is expressed as an immediate-mode transaction
+  with a visibility timeout.
+- **Idempotency keys** built from `(action, domain, type, name, content, priority, port)` collapse
+  duplicate hook fires (cPanel sometimes retries on transient hook errors).
+- **Mapping is the only place that knows the cPanel payload shape.** All later layers consume
+  `DnsRecord`, so adding a new transport upstream only touches `CpanelToCloudflareMapper`.
 
 ## See also
 

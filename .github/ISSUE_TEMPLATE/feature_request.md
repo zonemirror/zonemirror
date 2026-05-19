@@ -5,11 +5,9 @@ title: '[Feature] '
 labels: enhancement
 ---
 
-**Problem**
-What's the user need or pain point?
+**Problem** What's the user need or pain point?
 
-**Proposed solution**
-A short sketch of what you'd like to see.
+**Proposed solution** A short sketch of what you'd like to see.
 
 **Alternatives considered**
 

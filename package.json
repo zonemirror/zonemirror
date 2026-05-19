@@ -9,17 +9,3 @@
     "lint:prettier": "prettier --check \"**/*.{js,css,scss,md,json,yaml,yml}\""
   }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
