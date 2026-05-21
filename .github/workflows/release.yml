@@ -9,9 +9,9 @@ jobs:
   build-tarball:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set up PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@7c071dfe9dc99bdf297fa79cb49ea005b9fcadbc # 2.37.1
         with:
           php-version: '8.1'
           extensions: curl, json, pdo_sqlite, openssl
@@ -37,7 +37,7 @@ jobs:
             --exclude='.phpunit.cache' --exclude='coverage*' \
             ./ "dist/${DIST}/"
           (cd dist && tar -czf "${DIST}.tar.gz" "${DIST}" && sha256sum "${DIST}.tar.gz" > "${DIST}.tar.gz.sha256")
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
         with:
           files: |
             dist/*.tar.gz
