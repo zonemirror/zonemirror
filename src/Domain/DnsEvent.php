@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Domain;
+namespace ZoneMirror\Domain;
 
 /**
  * A pending DNS change captured from a cPanel hook, awaiting replay to

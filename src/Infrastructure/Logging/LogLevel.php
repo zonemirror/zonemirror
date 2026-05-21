@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Logging;
+namespace ZoneMirror\Infrastructure\Logging;
 
 enum LogLevel: string
 {

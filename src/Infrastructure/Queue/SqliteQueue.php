@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Queue;
+namespace ZoneMirror\Infrastructure\Queue;
 
-use CfSync\Domain\DnsEvent;
-use CfSync\Domain\DnsRecord;
-use CfSync\Domain\EventAction;
-use CfSync\Domain\RecordType;
-use CfSync\Infrastructure\Storage\Paths;
 use PDO;
 use RuntimeException;
+use ZoneMirror\Domain\DnsEvent;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Domain\RecordType;
+use ZoneMirror\Infrastructure\Storage\Paths;
 
 /**
  * Per-user SQLite event queue. WAL journaling enables a concurrent reader

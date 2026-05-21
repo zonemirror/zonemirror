@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Queue;
+namespace ZoneMirror\Infrastructure\Queue;
 
 /**
  * Exponential backoff with full jitter. Caps the delay so a stuck event

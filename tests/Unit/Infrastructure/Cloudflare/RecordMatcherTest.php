@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Tests\Unit\Infrastructure\Cloudflare;
+namespace ZoneMirror\Tests\Unit\Infrastructure\Cloudflare;
 
-use CfSync\Domain\DnsRecord;
-use CfSync\Domain\RecordType;
-use CfSync\Infrastructure\Cloudflare\RecordMatcher;
 use PHPUnit\Framework\TestCase;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\RecordType;
+use ZoneMirror\Infrastructure\Cloudflare\RecordMatcher;
 
 final class RecordMatcherTest extends TestCase
 {

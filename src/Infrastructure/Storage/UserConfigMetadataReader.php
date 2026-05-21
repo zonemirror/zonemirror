@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Storage;
+namespace ZoneMirror\Infrastructure\Storage;
 
 /**
  * Reads the unencrypted half of a user's config file. Used from the cPanel

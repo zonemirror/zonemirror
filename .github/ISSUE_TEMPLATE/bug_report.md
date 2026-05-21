@@ -9,7 +9,7 @@ labels: bug
 
 - cPanel/WHM version:
 - PHP version (`php -v`):
-- Plugin version (`cat /usr/local/cpanel/3rdparty/cloudflare-dns-sync/composer.json | grep version`
+- Plugin version (`cat /usr/local/cpanel/3rdparty/zonemirror/composer.json | grep version`
   or `git log -1 --format=%h`):
 
 **What did you do?** A minimal sequence of steps.
@@ -18,7 +18,7 @@ labels: bug
 
 **What actually happened?**
 
-**Logs** Paste excerpts from `/var/cpanel/cloudflare-dns-sync/logs/cf-sync.log`. Tokens are redacted
+**Logs** Paste excerpts from `/var/cpanel/zonemirror/logs/zonemirror.log`. Tokens are redacted
 automatically, but please double-check before pasting.
 
 **Anything else?**

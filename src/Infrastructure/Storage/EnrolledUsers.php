@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Storage;
+namespace ZoneMirror\Infrastructure\Storage;
 
 use RuntimeException;
 

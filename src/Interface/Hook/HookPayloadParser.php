@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Interface\Hook;
+namespace ZoneMirror\Interface\Hook;
 
 /**
  * Pulls the (domain, action, raw record) tuple out of a cPanel standardized

@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Domain;
+namespace ZoneMirror\Domain;
 
 /**
  * Cloudflare-shaped DNS record payload. Immutable.

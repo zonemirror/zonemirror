@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# cfsync — operator CLI for the Cloudflare DNS Sync cPanel plugin.
+# zonemirror — operator CLI for the ZoneMirror cPanel plugin.
 #
 # Subcommands:
-#   cfsync version            Show installed and latest available version.
-#   cfsync check              Compare installed vs latest; exit 0 if up to date, 10 if updates exist.
-#   cfsync update [--dry-run] Upgrade in place to the latest GitHub release.
-#   cfsync status             Daemon, hook, and queue health snapshot.
-#   cfsync auto-update on|off Enable/disable the systemd auto-update timer.
-#   cfsync logs [-n N]        Tail the plugin log (default: 50 lines).
-#   cfsync help               Show this help.
+#   zonemirror version            Show installed and latest available version.
+#   zonemirror check              Compare installed vs latest; exit 0 if up to date, 10 if updates exist.
+#   zonemirror update [--dry-run] Upgrade in place to the latest GitHub release.
+#   zonemirror status             Daemon, hook, and queue health snapshot.
+#   zonemirror auto-update on|off Enable/disable the systemd auto-update timer.
+#   zonemirror logs [-n N]        Tail the plugin log (default: 50 lines).
+#   zonemirror help               Show this help.
 #
 # All update operations require root.
 
 set -euo pipefail
 
-PLUGIN_ID="cloudflare-dns-sync"
+PLUGIN_ID="zonemirror"
 PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
 SYSTEM_DIR="/var/cpanel/${PLUGIN_ID}"
-LOG_FILE="${SYSTEM_DIR}/logs/cf-sync.log"
+LOG_FILE="${SYSTEM_DIR}/logs/zonemirror.log"
 SERVICE_NAME="${PLUGIN_ID}d"
 TIMER_NAME="${PLUGIN_ID}d-updater.timer"
-GH_OWNER="${GH_OWNER:-BusiRocket}"
-GH_REPO="${GH_REPO:-cpanel-cloudflare-dns-sync}"
+GH_OWNER="${GH_OWNER:-zonemirror}"
+GH_REPO="${GH_REPO:-zonemirror}"
 BOOTSTRAP_URL="https://raw.githubusercontent.com/${GH_OWNER}/${GH_REPO}/main/packaging/bootstrap.sh"
 
-die() { echo "cfsync: $*" >&2; exit 1; }
+die() { echo "zonemirror: $*" >&2; exit 1; }
 
 require_root() {
   [[ $EUID -eq 0 ]] || die "this subcommand requires root (sudo)."
@@ -127,7 +127,7 @@ cmd_status() {
   if systemctl --quiet is-enabled "$TIMER_NAME" 2>/dev/null; then
     systemctl --no-pager status "$TIMER_NAME" | head -n 5
   else
-    echo "  disabled (enable with: sudo cfsync auto-update on)"
+    echo "  disabled (enable with: sudo zonemirror auto-update on)"
   fi
   echo
   echo "== hooks =="
@@ -135,7 +135,7 @@ cmd_status() {
     | awk -v plugin="$PLUGIN_ID" '$0 ~ plugin {found++} END {print "  registered:", (found+0)}'
   echo
   echo "== queues =="
-  for d in /home/*/.cloudflare-dns-sync/queue.sqlite /root/.cloudflare-dns-sync/queue.sqlite; do
+  for d in /home/*/.zonemirror/queue.sqlite /root/.zonemirror/queue.sqlite; do
     [[ -f "$d" ]] || continue
     q="$(sqlite3 "$d" 'SELECT COUNT(*) FROM events WHERE dead_at IS NULL;' 2>/dev/null || echo '?')"
     dl="$(sqlite3 "$d" 'SELECT COUNT(*) FROM events WHERE dead_at IS NOT NULL;' 2>/dev/null || echo '?')"
@@ -156,7 +156,7 @@ cmd_auto_update() {
       echo "auto-update disabled."
       ;;
     *)
-      die "usage: cfsync auto-update on|off"
+      die "usage: zonemirror auto-update on|off"
       ;;
   esac
 }
@@ -189,7 +189,7 @@ main() {
     auto-update)  cmd_auto_update "$@" ;;
     logs)         cmd_logs "$@" ;;
     help|-h|--help) cmd_help ;;
-    *)            die "unknown subcommand: $sub (try: cfsync help)" ;;
+    *)            die "unknown subcommand: $sub (try: zonemirror help)" ;;
   esac
 }
 

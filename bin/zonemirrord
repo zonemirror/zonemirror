@@ -6,13 +6,13 @@ declare(strict_types=1);
 /**
  * Daemon entry point. Supervised by systemd. Runs as root so it can read
  * every enrolled user's queue and config. Reads no command-line input; all
- * configuration lives under /var/cpanel/cloudflare-dns-sync/.
+ * configuration lives under /var/cpanel/zonemirror/.
  */
 
-use CfSync\Infrastructure\Logging\FileLogger;
-use CfSync\Infrastructure\Logging\LogLevel;
-use CfSync\Infrastructure\Storage\Paths;
-use CfSync\Interface\Worker\WorkerLoop;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Logging\LogLevel;
+use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Interface\Worker\WorkerLoop;
 
 $autoload = __DIR__ . '/../vendor/autoload.php';
 if (!is_file($autoload)) {

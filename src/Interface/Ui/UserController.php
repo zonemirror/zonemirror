@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Interface\Ui;
+namespace ZoneMirror\Interface\Ui;
 
-use CfSync\Infrastructure\Cloudflare\CloudflareApiClient;
-use CfSync\Infrastructure\Logging\FileLogger;
-use CfSync\Infrastructure\Logging\LogLevel;
-use CfSync\Infrastructure\Storage\ConfigCrypto;
-use CfSync\Infrastructure\Storage\EnrolledUsers;
-use CfSync\Infrastructure\Storage\KeyStore;
-use CfSync\Infrastructure\Storage\Paths;
-use CfSync\Infrastructure\Storage\SystemConfigStorage;
-use CfSync\Infrastructure\Storage\UserConfigStorage;
+use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Logging\LogLevel;
+use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
+use ZoneMirror\Infrastructure\Storage\KeyStore;
+use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
+use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
 
 /**
  * Glue between the cPanel UI template and the storage/service layer. Owns
@@ -82,7 +82,7 @@ final class UserController
         $dead = 0;
         if ($cfg['enabled']) {
             try {
-                $queue = new \CfSync\Infrastructure\Queue\SqliteQueue($user);
+                $queue = new \ZoneMirror\Infrastructure\Queue\SqliteQueue($user);
                 $depth = $queue->depth();
                 $dead = $queue->deadLetterCount();
             } catch (\Throwable) {

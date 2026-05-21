@@ -9,8 +9,8 @@ declare(strict_types=1);
  * idempotency-key contract used elsewhere).
  */
 
-use CfSync\Domain\EventAction;
-use CfSync\Interface\Hook\HookHandler;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Interface\Hook\HookHandler;
 
 $autoload = __DIR__ . '/../vendor/autoload.php';
 if (!is_file($autoload)) {

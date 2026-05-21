@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PLUGIN_ID="cloudflare-dns-sync"
+PLUGIN_ID="zonemirror"
 PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
 
 unregister() {

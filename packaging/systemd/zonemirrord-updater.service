@@ -1,5 +1,5 @@
 [Unit]
-Description=Cloudflare DNS Sync — auto-updater (one-shot)
+Description=ZoneMirror — auto-updater (one-shot)
 After=network-online.target
 Wants=network-online.target
 
@@ -7,7 +7,7 @@ Wants=network-online.target
 Type=oneshot
 User=root
 Group=root
-ExecStart=/usr/local/cpanel/3rdparty/cloudflare-dns-sync/bin/cfsync update
+ExecStart=/usr/local/cpanel/3rdparty/zonemirror/bin/zonemirror update
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectKernelTunables=true

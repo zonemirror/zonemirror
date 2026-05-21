@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Version;
+namespace ZoneMirror\Infrastructure\Version;
 
 /**
  * Reads the plugin's installed semantic version from the VERSION file at the
@@ -17,7 +17,7 @@ final class VersionReader
         if ($root !== null) {
             $candidates[] = $root . '/VERSION';
         }
-        $candidates[] = '/usr/local/cpanel/3rdparty/cloudflare-dns-sync/VERSION';
+        $candidates[] = '/usr/local/cpanel/3rdparty/zonemirror/VERSION';
         $candidates[] = dirname(__DIR__, 3) . '/VERSION';
 
         foreach ($candidates as $path) {

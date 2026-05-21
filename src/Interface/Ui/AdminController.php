@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Interface\Ui;
+namespace ZoneMirror\Interface\Ui;
 
-use CfSync\Infrastructure\Storage\EnrolledUsers;
-use CfSync\Infrastructure\Storage\SystemConfigStorage;
-use CfSync\Infrastructure\Version\VersionReader;
+use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
+use ZoneMirror\Infrastructure\Version\VersionReader;
 
 /**
  * WHM admin view-model: global defaults, allowlist, dry-run kill switch.

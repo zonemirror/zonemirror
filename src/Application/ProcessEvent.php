@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Application;
+namespace ZoneMirror\Application;
 
-use CfSync\Domain\DnsRecord;
-use CfSync\Domain\EventAction;
-use CfSync\Domain\SyncResult;
-use CfSync\Infrastructure\Cloudflare\CloudflareApiClient;
-use CfSync\Infrastructure\Cloudflare\CloudflareException;
-use CfSync\Infrastructure\Cloudflare\ZoneSnapshot;
-use CfSync\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Domain\SyncResult;
+use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Infrastructure\Cloudflare\CloudflareException;
+use ZoneMirror\Infrastructure\Cloudflare\ZoneSnapshot;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
 
 /**
  * Use case: apply one queued DNS event to Cloudflare. The zone snapshot is

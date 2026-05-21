@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Interface\Ui;
+namespace ZoneMirror\Interface\Ui;
 
 /**
  * Per-session CSRF token using PHP's native session. Tokens are validated
@@ -10,7 +10,7 @@ namespace CfSync\Interface\Ui;
  */
 final class Csrf
 {
-    private const SESSION_KEY = 'cfsync_csrf';
+    private const SESSION_KEY = 'zonemirror_csrf';
 
     public static function token(): string
     {

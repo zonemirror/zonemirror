@@ -7,9 +7,9 @@ declare(strict_types=1);
  * administrator define global defaults and an allowlist of users.
  */
 
-use CfSync\Interface\Ui\AdminController;
+use ZoneMirror\Interface\Ui\AdminController;
 
-$autoload = '/usr/local/cpanel/3rdparty/cloudflare-dns-sync/vendor/autoload.php';
+$autoload = '/usr/local/cpanel/3rdparty/zonemirror/vendor/autoload.php';
 if (!is_file($autoload)) {
     http_response_code(500);
     echo 'Plugin not installed correctly: missing vendor/autoload.php';
@@ -27,7 +27,7 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cloudflare DNS Sync — Admin</title>
+  <title>ZoneMirror — Admin</title>
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'; img-src 'self' data:; form-action 'self'; base-uri 'self'; frame-ancestors 'self'">
   <style>
@@ -44,12 +44,12 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
 </head>
 <body>
 <div class="card">
-  <h2>Cloudflare DNS Sync — Administration
+  <h2>ZoneMirror — Administration
     <span class="pill" title="Installed plugin version">v<?= $h($vm['installed_version']) ?></span>
   </h2>
   <p class="muted">
-    Updates: <code>sudo cfsync check</code> compares with the latest GitHub release.
-    Auto-update: <code>sudo cfsync auto-update on</code> enables the daily systemd timer.
+    Updates: <code>sudo zonemirror check</code> compares with the latest GitHub release.
+    Auto-update: <code>sudo zonemirror auto-update on</code> enables the daily systemd timer.
   </p>
 
   <?php if ($vm['saved']): ?>

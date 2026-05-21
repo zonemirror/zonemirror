@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Tests\Unit\Infrastructure\Mapping;
+namespace ZoneMirror\Tests\Unit\Infrastructure\Mapping;
 
-use CfSync\Domain\RecordType;
-use CfSync\Infrastructure\Mapping\CpanelToCloudflareMapper;
 use PHPUnit\Framework\TestCase;
+use ZoneMirror\Domain\RecordType;
+use ZoneMirror\Infrastructure\Mapping\CpanelToCloudflareMapper;
 
 final class CpanelToCloudflareMapperTest extends TestCase
 {

@@ -9,7 +9,7 @@ set -euo pipefail
 # UAPI for ZoneEdit, but we also register Api2 because legacy clients (and
 # some scripted callers) still go through that path.
 
-PLUGIN_ID="cloudflare-dns-sync"
+PLUGIN_ID="zonemirror"
 PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
 
 register() {

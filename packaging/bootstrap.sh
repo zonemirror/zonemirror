@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-line installer for Cloudflare DNS Sync for cPanel.
+# One-line installer for ZoneMirror.
 #
-#   curl -fsSL https://raw.githubusercontent.com/BusiRocket/cpanel-cloudflare-dns-sync/main/packaging/bootstrap.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packaging/bootstrap.sh | sudo bash
 #
 # Or with a pinned version:
 #
@@ -11,20 +11,20 @@
 #  1. Validates: root + cPanel + PHP >= 8.1.
 #  2. Resolves the latest GitHub release (or honors $VERSION).
 #  3. Downloads the release tarball and its .sha256 sidecar, verifies.
-#  4. Extracts to /opt/cloudflare-dns-sync/releases/<ver>/ and atomically
-#     swaps the symlink /opt/cloudflare-dns-sync/current -> that release.
+#  4. Extracts to /opt/zonemirror/releases/<ver>/ and atomically
+#     swaps the symlink /opt/zonemirror/current -> that release.
 #  5. Hands off to packaging/install.sh inside that release.
 #
 # Safe to re-run; will upgrade in place.
 
 set -euo pipefail
 
-GH_OWNER="${GH_OWNER:-BusiRocket}"
-GH_REPO="${GH_REPO:-cpanel-cloudflare-dns-sync}"
-ROOT="/opt/cloudflare-dns-sync"
+GH_OWNER="${GH_OWNER:-zonemirror}"
+GH_REPO="${GH_REPO:-zonemirror}"
+ROOT="/opt/zonemirror"
 RELEASES="$ROOT/releases"
 CURRENT_LINK="$ROOT/current"
-LOG_TAG="[cfsync-bootstrap]"
+LOG_TAG="[zonemirror-bootstrap]"
 
 log()  { echo "$LOG_TAG $*"; }
 fail() { echo "$LOG_TAG ERROR: $*" >&2; exit 1; }
@@ -73,10 +73,10 @@ resolve_version() {
 
 download_and_verify() {
   local version="$1" ver_noprefix="${1#v}"
-  local tarball="cloudflare-dns-sync-${ver_noprefix}.tar.gz"
+  local tarball="zonemirror-${ver_noprefix}.tar.gz"
   local base="https://github.com/$GH_OWNER/$GH_REPO/releases/download/$version"
   local tmp
-  tmp="$(mktemp -d /tmp/cfsync-bootstrap.XXXXXX)"
+  tmp="$(mktemp -d /tmp/zonemirror-bootstrap.XXXXXX)"
 
   log "Downloading $version ..."
   curl -fsSL -o "$tmp/$tarball" "$base/$tarball" \
@@ -102,7 +102,7 @@ extract_and_link() {
   fi
   mkdir -p "$target"
 
-  # The tarball top-level dir is cloudflare-dns-sync-<ver>; strip it.
+  # The tarball top-level dir is zonemirror-<ver>; strip it.
   tar -xzf "$tarball" -C "$target" --strip-components=1
 
   ln -sfn "$target" "$CURRENT_LINK"

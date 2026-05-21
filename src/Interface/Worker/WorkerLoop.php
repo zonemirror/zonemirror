@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Interface\Worker;
+namespace ZoneMirror\Interface\Worker;
 
-use CfSync\Application\ProcessEvent;
-use CfSync\Infrastructure\Cloudflare\CloudflareApiClient;
-use CfSync\Infrastructure\Cloudflare\CloudflareException;
-use CfSync\Infrastructure\Cloudflare\ZoneSnapshot;
-use CfSync\Infrastructure\Logging\FileLogger;
-use CfSync\Infrastructure\Queue\SqliteQueue;
-use CfSync\Infrastructure\Storage\ConfigCrypto;
-use CfSync\Infrastructure\Storage\EnrolledUsers;
-use CfSync\Infrastructure\Storage\KeyStore;
-use CfSync\Infrastructure\Storage\Paths;
-use CfSync\Infrastructure\Storage\SystemConfigStorage;
-use CfSync\Infrastructure\Storage\UserConfigStorage;
+use ZoneMirror\Application\ProcessEvent;
+use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Infrastructure\Cloudflare\CloudflareException;
+use ZoneMirror\Infrastructure\Cloudflare\ZoneSnapshot;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
+use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
+use ZoneMirror\Infrastructure\Storage\KeyStore;
+use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
+use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
 
 /**
  * Background daemon. Iterates the enrolled users, drains each per-user queue

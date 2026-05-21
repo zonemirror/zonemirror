@@ -58,7 +58,7 @@ Alternatives considered:
   overkill for an INSERT.
 - **systemd-journald + a custom reader**: ties us to a single transport.
 
-A per-user SQLite file at `~/.cloudflare-dns-sync/queue.sqlite` with WAL journaling gives durable,
+A per-user SQLite file at `~/.zonemirror/queue.sqlite` with WAL journaling gives durable,
 isolated queues that the hook (running as the user) can write and the root daemon can read. The
 price is iterating `EnrolledUsers::all()` in the daemon loop instead of one shared SELECT.
 

@@ -29,7 +29,7 @@ jobs:
           REF_NAME: ${{ github.ref_name }}
         run: |
           VERSION="${REF_NAME#v}"
-          DIST="cloudflare-dns-sync-${VERSION}"
+          DIST="zonemirror-${VERSION}"
           mkdir -p "dist/${DIST}"
           rsync -a \
             --exclude='.git' --exclude='.github' --exclude='tests' \

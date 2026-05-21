@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Tests\Unit\Infrastructure\Storage;
+namespace ZoneMirror\Tests\Unit\Infrastructure\Storage;
 
-use CfSync\Infrastructure\Storage\ConfigCrypto;
-use CfSync\Infrastructure\Storage\KeyStore;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
+use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\KeyStore;
 
 final class ConfigCryptoTest extends TestCase
 {
@@ -15,7 +15,7 @@ final class ConfigCryptoTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->keyPath = sys_get_temp_dir() . '/cfsync-key-' . bin2hex(random_bytes(4));
+        $this->keyPath = sys_get_temp_dir() . '/zonemirror-key-' . bin2hex(random_bytes(4));
     }
 
     protected function tearDown(): void
