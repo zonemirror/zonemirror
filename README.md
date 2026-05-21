@@ -19,9 +19,11 @@
   <a href="#project-status"><img alt="Status: beta" src="https://img.shields.io/badge/status-beta-yellow.svg"></a>
 </p>
 
+# ZoneMirror
+
 ## Table of contents
 
-- [TL;DR](#tldr)
+- [Quick start](#quick-start)
 - [Why use this](#why-use-this)
 - [How it works](#how-it-works)
 - [Requirements](#requirements)
@@ -44,7 +46,7 @@
 
 ---
 
-## TL;DR
+## Quick start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packaging/bootstrap.sh \
