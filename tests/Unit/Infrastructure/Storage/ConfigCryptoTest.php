@@ -45,7 +45,8 @@ final class ConfigCryptoTest extends TestCase
         $cipher = $c->encrypt('hello');
         $raw = base64_decode($cipher, true);
         self::assertNotFalse($raw);
-        $raw[strlen($raw) - 1] = "\x00";
+        // XOR (not overwrite): guarantees a bit flip, avoids 1/256 flake when the random byte matched.
+        $raw[strlen($raw) - 1] = chr(ord($raw[strlen($raw) - 1]) ^ 0xFF);
         $tampered = base64_encode($raw);
 
         $this->expectException(RuntimeException::class);
