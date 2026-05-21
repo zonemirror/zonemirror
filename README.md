@@ -1,14 +1,23 @@
-# ZoneMirror
+<p align="center">
+  <a href="https://zonemirror.com">
+    <img src=".github/assets/social-preview.png" alt="ZoneMirror — Real-time DNS zone sync" width="100%">
+  </a>
+</p>
 
-> Real-time mirror of cPanel's Zone Editor into Cloudflare. Multi-tenant. One token per cPanel user.
-> Zero cron jobs.
+<p align="center">
+  <strong>cPanel/WHM plugin that mirrors Zone Editor changes into Cloudflare in real time.</strong><br>
+  Multi-tenant · per-user encrypted tokens · zero cron jobs · systemd-supervised.
+</p>
 
-[![CI](https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml/badge.svg)](https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-777BB4.svg)](composer.json)
-[![cPanel 108+](https://img.shields.io/badge/cPanel-108%2B-orange.svg)](https://docs.cpanel.net/)
-[![Release](https://img.shields.io/github/v/release/zonemirror/zonemirror?display_name=tag)](https://github.com/zonemirror/zonemirror/releases)
-[![Status: beta](https://img.shields.io/badge/status-beta-yellow.svg)](#project-status)
+<p align="center">
+  <a href="https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
+  <a href="composer.json"><img alt="PHP 8.1+" src="https://img.shields.io/badge/PHP-8.1%2B-777BB4.svg"></a>
+  <a href="https://docs.cpanel.net/"><img alt="cPanel 108+" src="https://img.shields.io/badge/cPanel-108%2B-orange.svg"></a>
+  <a href="https://github.com/zonemirror/zonemirror/releases"><img alt="Release" src="https://img.shields.io/github/v/release/zonemirror/zonemirror?display_name=tag"></a>
+  <a href="https://github.com/sponsors/CristianDeluxe"><img alt="Sponsor" src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white"></a>
+  <a href="#project-status"><img alt="Status: beta" src="https://img.shields.io/badge/status-beta-yellow.svg"></a>
+</p>
 
 ## Table of contents
 
