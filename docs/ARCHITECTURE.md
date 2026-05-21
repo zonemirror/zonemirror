@@ -19,7 +19,7 @@ HookHandler::handle
   ├── SystemConfigStorage::isUserAllowed
   ├── HookPayloadParser::extract
   ├── CpanelToCloudflareMapper::map
-  └── SqliteQueue::enqueue       ← writes to ~/.cloudflare-dns-sync/queue.sqlite
+  └── SqliteQueue::enqueue       ← writes to ~/.zonemirror/queue.sqlite
        │
        ▼  (out-of-band)
 WorkerLoop::run                  ← systemd-supervised, runs as root
@@ -64,14 +64,14 @@ WorkerLoop::run                  ← systemd-supervised, runs as root
 
 | Path                                               | Owner     | Mode | Purpose                                  |
 | -------------------------------------------------- | --------- | ---- | ---------------------------------------- |
-| `/usr/local/cpanel/3rdparty/cloudflare-dns-sync/`  | root:root | 0755 | Plugin code + vendor/                    |
-| `/var/cpanel/cloudflare-dns-sync/system.json`      | root:root | 0600 | WHM-admin defaults                       |
-| `/var/cpanel/cloudflare-dns-sync/master.key`       | root:root | 0600 | 32-byte token-encryption key             |
-| `/var/cpanel/cloudflare-dns-sync/enrolled-users`   | root:root | 0644 | Newline-separated list of opted-in users |
-| `/var/cpanel/cloudflare-dns-sync/logs/cf-sync.log` | root:root | 0640 | JSON-lines log (token-redacted)          |
-| `/home/<user>/.cloudflare-dns-sync/config.json`    | `<user>`  | 0600 | Per-user settings + encrypted token      |
-| `/home/<user>/.cloudflare-dns-sync/queue.sqlite`   | `<user>`  | 0600 | Per-user pending DNS events              |
-| `/etc/systemd/system/cloudflare-dns-syncd.service` | root:root | 0644 | systemd unit                             |
+| `/usr/local/cpanel/3rdparty/zonemirror/`  | root:root | 0755 | Plugin code + vendor/                    |
+| `/var/cpanel/zonemirror/system.json`      | root:root | 0600 | WHM-admin defaults                       |
+| `/var/cpanel/zonemirror/master.key`       | root:root | 0600 | 32-byte token-encryption key             |
+| `/var/cpanel/zonemirror/enrolled-users`   | root:root | 0644 | Newline-separated list of opted-in users |
+| `/var/cpanel/zonemirror/logs/zonemirror.log` | root:root | 0640 | JSON-lines log (token-redacted)          |
+| `/home/<user>/.zonemirror/config.json`    | `<user>`  | 0600 | Per-user settings + encrypted token      |
+| `/home/<user>/.zonemirror/queue.sqlite`   | `<user>`  | 0600 | Per-user pending DNS events              |
+| `/etc/systemd/system/zonemirrord.service` | root:root | 0644 | systemd unit                             |
 
 ## Why these design choices
 
@@ -88,4 +88,5 @@ WorkerLoop::run                  ← systemd-supervised, runs as root
 ## See also
 
 - [`adr/0001-record-architecture-decisions.md`](adr/0001-record-architecture-decisions.md)
-- [`THREAT_MODEL.md`](THREAT_MODEL.md)
+- [`PERFORMANCE.md`](PERFORMANCE.md)
+- [`../SECURITY.md`](../SECURITY.md)

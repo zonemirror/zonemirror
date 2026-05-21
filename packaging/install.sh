@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs (or upgrades) the Cloudflare DNS Sync plugin on a cPanel/WHM
+# Installs (or upgrades) the ZoneMirror plugin on a cPanel/WHM
 # server. Requires: root, cPanel >= 108, PHP >= 8.1. Safe to re-run.
 
-PLUGIN_ID="cloudflare-dns-sync"
-PLUGIN_NAME="Cloudflare DNS Sync"
+PLUGIN_ID="zonemirror"
+PLUGIN_NAME="ZoneMirror"
 PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
 SYSTEM_DIR="/var/cpanel/${PLUGIN_ID}"
 SERVICE_NAME="${PLUGIN_ID}d"
@@ -15,7 +15,7 @@ UPDATER_TIMER_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.timer"
 LIVEAPI_DIR="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
 WHM_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/${PLUGIN_ID}"
 ICON_TARGET_DIR="/usr/local/cpanel/base/unprotected/${PLUGIN_ID}"
-CLI_SYMLINK="/usr/local/bin/cfsync"
+CLI_SYMLINK="/usr/local/bin/zonemirror"
 
 require_root() {
   if [[ $EUID -ne 0 ]]; then
@@ -88,7 +88,7 @@ install_service() {
   systemctl daemon-reload
   systemctl enable --now "$SERVICE_NAME"
   # Updater timer is NOT enabled by default — operators opt in via:
-  #   sudo cfsync auto-update on
+  #   sudo zonemirror auto-update on
   # If it was previously enabled, keep it running across upgrades.
   if systemctl --quiet is-enabled "${SERVICE_NAME}-updater.timer" 2>/dev/null; then
     systemctl restart "${SERVICE_NAME}-updater.timer" || true
@@ -96,11 +96,11 @@ install_service() {
 }
 
 register_plugin() {
-  /usr/local/cpanel/bin/register_cpanelplugin "$PREFIX/packaging/cloudflare_dns_sync.cpanelplugin" || true
+  /usr/local/cpanel/bin/register_cpanelplugin "$PREFIX/packaging/zonemirror.cpanelplugin" || true
 }
 
 install_cli() {
-  ln -sfn "$PREFIX/bin/cfsync" "$CLI_SYMLINK"
+  ln -sfn "$PREFIX/bin/zonemirror" "$CLI_SYMLINK"
 }
 
 fix_permissions() {
@@ -115,14 +115,14 @@ print_summary() {
   local ver="unknown"
   [[ -f "$PREFIX/VERSION" ]] && ver="$(tr -d '[:space:]' < "$PREFIX/VERSION")"
   echo
-  echo "Installed Cloudflare DNS Sync v${ver}."
+  echo "Installed ZoneMirror v${ver}."
   echo " - cPanel UI       : Domains -> ${PLUGIN_NAME}"
   echo " - WHM UI          : Plugins -> ${PLUGIN_NAME}"
   echo " - Daemon          : systemctl status ${SERVICE_NAME}"
-  echo " - Logs            : ${SYSTEM_DIR}/logs/cf-sync.log"
-  echo " - CLI             : cfsync help"
-  echo " - Auto-update     : sudo cfsync auto-update on   (off by default)"
-  echo " - Manual update   : sudo cfsync update"
+  echo " - Logs            : ${SYSTEM_DIR}/logs/zonemirror.log"
+  echo " - CLI             : zonemirror help"
+  echo " - Auto-update     : sudo zonemirror auto-update on   (off by default)"
+  echo " - Manual update   : sudo zonemirror update"
 }
 
 main() {

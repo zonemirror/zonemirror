@@ -1,0 +1,12 @@
+[Unit]
+Description=ZoneMirror — daily auto-update check
+Documentation=https://github.com/zonemirror/zonemirror
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=3h
+Persistent=true
+Unit=zonemirrord-updater.service
+
+[Install]
+WantedBy=timers.target

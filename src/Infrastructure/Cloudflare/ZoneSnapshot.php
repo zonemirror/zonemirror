@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Cloudflare;
+namespace ZoneMirror\Infrastructure\Cloudflare;
 
-use CfSync\Domain\DnsRecord;
+use ZoneMirror\Domain\DnsRecord;
 
 /**
  * In-memory mirror of a Cloudflare zone's DNS records, refreshed once per

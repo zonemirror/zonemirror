@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Logging;
+namespace ZoneMirror\Infrastructure\Logging;
 
 /**
  * Append-only JSON-lines logger. Every record is funneled through

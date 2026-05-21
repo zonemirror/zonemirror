@@ -6,7 +6,7 @@ Only the latest minor release line receives security patches.
 
 ## Reporting a vulnerability
 
-**Do not open a public GitHub issue.** Email `security@busirocket.com` with:
+**Do not open a public GitHub issue.** Email `security@zonemirror.com` with:
 
 - A description of the issue and its potential impact.
 - Steps to reproduce or a proof-of-concept.
@@ -33,4 +33,5 @@ on severity) before public disclosure.
 - All UI forms validate a CSRF token with `hash_equals`.
 - Both UI pages set a strict `Content-Security-Policy` (no inline JS, no remote origins).
 
-See `docs/THREAT_MODEL.md` for the full attacker model and mitigations.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the layered design and trust boundaries that
+frame these mitigations.

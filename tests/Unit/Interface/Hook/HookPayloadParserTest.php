@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Tests\Unit\Interface\Hook;
+namespace ZoneMirror\Tests\Unit\Interface\Hook;
 
-use CfSync\Interface\Hook\HookPayloadParser;
 use PHPUnit\Framework\TestCase;
+use ZoneMirror\Interface\Hook\HookPayloadParser;
 
 final class HookPayloadParserTest extends TestCase
 {

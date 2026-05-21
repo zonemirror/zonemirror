@@ -1,34 +1,58 @@
-# Cloudflare DNS Sync for cPanel
+# ZoneMirror
 
 > Real-time mirror of cPanel's Zone Editor into Cloudflare. Multi-tenant. One token per cPanel user.
 > Zero cron jobs.
 
-[![CI](https://github.com/BusiRocket/cpanel-cloudflare-dns-sync/actions/workflows/ci.yml/badge.svg)](https://github.com/BusiRocket/cpanel-cloudflare-dns-sync/actions/workflows/ci.yml)
+[![CI](https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml/badge.svg)](https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-777BB4.svg)](composer.json)
 [![cPanel 108+](https://img.shields.io/badge/cPanel-108%2B-orange.svg)](https://docs.cpanel.net/)
-[![Release](https://img.shields.io/github/v/release/BusiRocket/cpanel-cloudflare-dns-sync?display_name=tag)](https://github.com/BusiRocket/cpanel-cloudflare-dns-sync/releases)
+[![Release](https://img.shields.io/github/v/release/zonemirror/zonemirror?display_name=tag)](https://github.com/zonemirror/zonemirror/releases)
+[![Status: beta](https://img.shields.io/badge/status-beta-yellow.svg)](#project-status)
+
+## Table of contents
+
+- [TL;DR](#tldr)
+- [Why use this](#why-use-this)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Install](#install)
+- [Update](#update)
+- [Configuration reference](#configuration-reference)
+- [Diagnostics](#diagnostics)
+- [Uninstall](#uninstall)
+- [Security](#security)
+- [FAQ](#faq)
+- [Development](#development)
+- [Documentation](#documentation)
+- [Project status](#project-status)
+- [Versioning](#versioning)
+- [Support](#support)
+- [Roadmap](#roadmap)
+- [Contributing](#contributing)
+- [Acknowledgements](#acknowledgements)
+- [License](#license)
 
 ---
 
 ## TL;DR
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BusiRocket/cpanel-cloudflare-dns-sync/main/packaging/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packaging/bootstrap.sh \
   | sudo bash
 ```
 
 That one line on a cPanel/WHM server (PHP 8.1+, cPanel 108+) downloads the latest signed release,
 verifies its SHA-256, installs the plugin under `/usr/local/cpanel/3rdparty/`, registers the
-standardized hooks, starts the systemd daemon, and drops a `cfsync` CLI in `/usr/local/bin/`.
+standardized hooks, starts the systemd daemon, and drops a `zonemirror` CLI in `/usr/local/bin/`.
 
 ```bash
-sudo cfsync version          # show installed + latest
-sudo cfsync check            # check for updates (exit 10 if newer available)
-sudo cfsync update           # upgrade to latest GitHub release
-sudo cfsync auto-update on   # enable daily auto-update timer
-sudo cfsync status           # daemon / hooks / queues snapshot
-sudo cfsync logs -n 200      # tail the plugin log
+sudo zonemirror version          # show installed + latest
+sudo zonemirror check            # check for updates (exit 10 if newer available)
+sudo zonemirror update           # upgrade to latest GitHub release
+sudo zonemirror auto-update on   # enable daily auto-update timer
+sudo zonemirror status           # daemon / hooks / queues snapshot
+sudo zonemirror logs -n 200      # tail the plugin log
 ```
 
 ---
@@ -58,8 +82,8 @@ path — so it's something you can put on a fleet of cPanel servers and not thin
 | Dry-run kill switch                 | no                      | WHM toggle                       |
 | Token redaction in logs             | no                      | yes                              |
 | CSRF + strict CSP on UI             | no                      | yes                              |
-| One-line install, auto-update       | no                      | `cfsync update`                  |
-| 30+ unit tests + PHPStan level 8    | no                      | yes                              |
+| One-line install, auto-update       | no                      | `zonemirror update`                  |
+| 33 unit tests + PHPStan level 8     | no                      | yes                              |
 
 ---
 
@@ -69,12 +93,12 @@ path — so it's something you can put on a fleet of cPanel servers and not thin
 flowchart LR
     A[cPanel user edits a record] -->|UAPI ZoneEdit| B[Standardized hook]
     B -->|JSON on stdin| C[bin/on_*_zone_record]
-    C -->|maps cPanel payload| D["SqliteQueue<br/>(~/.cloudflare-dns-sync/queue.sqlite)"]
-    D -.poll.-> E[cf-syncd daemon root]
+    C -->|maps cPanel payload| D["SqliteQueue<br/>(~/.zonemirror/queue.sqlite)"]
+    D -.poll.-> E[zonemirrord daemon root]
     E -->|listRecords once per cycle| F[CloudflareApiClient]
     F -->|POST/PUT/DELETE| G[(Cloudflare DNS)]
     E -->|writes back| D
-    E -->|JSON lines<br/>tokens redacted| H["/var/cpanel/cloudflare-dns-sync/logs/"]
+    E -->|JSON lines<br/>tokens redacted| H["/var/cpanel/zonemirror/logs/"]
 ```
 
 - Each cPanel user has their own SQLite event queue under their `$HOME`.
@@ -103,39 +127,39 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown.
 ### Option 1 — One-liner (recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BusiRocket/cpanel-cloudflare-dns-sync/main/packaging/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packaging/bootstrap.sh \
   | sudo bash
 ```
 
 This pulls the latest GitHub release tarball, verifies its SHA-256, stages it under
-`/opt/cloudflare-dns-sync/releases/<version>/`, symlinks `/opt/cloudflare-dns-sync/current` to it,
+`/opt/zonemirror/releases/<version>/`, symlinks `/opt/zonemirror/current` to it,
 and runs `packaging/install.sh`. Re-running upgrades in place and keeps the last three releases for
 rollback.
 
 Pin a specific version:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BusiRocket/cpanel-cloudflare-dns-sync/main/packaging/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packaging/bootstrap.sh \
   | sudo VERSION=v0.1.0 bash
 ```
 
 ### Option 2 — Clone + install
 
 ```bash
-git clone https://github.com/BusiRocket/cpanel-cloudflare-dns-sync.git
-cd cpanel-cloudflare-dns-sync
+git clone https://github.com/zonemirror/zonemirror.git
+cd zonemirror
 composer install --no-dev --prefer-dist --optimize-autoloader
 sudo bash packaging/install.sh
 ```
 
 ### After installing
 
-1. **WHM → Plugins → Cloudflare DNS Sync** — set global defaults / allowlist / dry-run mode.
-2. **cPanel → Domains → Cloudflare DNS Sync** (per allowlisted user) — paste the Cloudflare API
+1. **WHM → Plugins → ZoneMirror** — set global defaults / allowlist / dry-run mode.
+2. **cPanel → Domains → ZoneMirror** (per allowlisted user) — paste the Cloudflare API
    token, pick the zone, "Test connection", **Enable**.
 3. Tail the log on the server:
    ```bash
-   sudo tail -f /var/cpanel/cloudflare-dns-sync/logs/cf-sync.log
+   sudo tail -f /var/cpanel/zonemirror/logs/zonemirror.log
    ```
 
 A test edit in cPanel's Zone Editor should land in Cloudflare in **under 2 seconds**.
@@ -147,15 +171,15 @@ A test edit in cPanel's Zone Editor should land in Cloudflare in **under 2 secon
 Manual:
 
 ```bash
-sudo cfsync update              # upgrade to latest GitHub release
-sudo cfsync update --dry-run    # show what would happen
+sudo zonemirror update              # upgrade to latest GitHub release
+sudo zonemirror update --dry-run    # show what would happen
 ```
 
 Automatic (daily, with randomized 0-3 h delay so a fleet doesn't all hit GitHub at the same minute):
 
 ```bash
-sudo cfsync auto-update on      # enable systemd timer
-sudo cfsync auto-update off     # disable
+sudo zonemirror auto-update on      # enable systemd timer
+sudo zonemirror auto-update off     # disable
 ```
 
 The auto-update systemd unit is **off by default**. Operators opt in explicitly; production fleets
@@ -168,7 +192,7 @@ alongside it on the GitHub release page.
 
 ## Configuration reference
 
-### WHM admin (`/var/cpanel/cloudflare-dns-sync/system.json`)
+### WHM admin (`/var/cpanel/zonemirror/system.json`)
 
 | Field              | Type                     | Default | Notes                                                     |
 | ------------------ | ------------------------ | ------- | --------------------------------------------------------- |
@@ -178,7 +202,7 @@ alongside it on the GitHub release page.
 | `rate_limit_rps`   | int 1-50                 | `5`     | Inter-call sleep enforced in the worker                   |
 | `dry_run`          | bool                     | `false` | Kill switch — logs intended changes, makes no API calls   |
 
-### Per cPanel user (`~/.cloudflare-dns-sync/config.json`)
+### Per cPanel user (`~/.zonemirror/config.json`)
 
 | Field              | Type            | Notes                                                     |
 | ------------------ | --------------- | --------------------------------------------------------- |
@@ -194,16 +218,16 @@ alongside it on the GitHub release page.
 
 | Symptom                | Command                                                                                  |
 | ---------------------- | ---------------------------------------------------------------------------------------- |
-| Hook didn't fire       | `/usr/local/cpanel/bin/manage_hooks list \| grep cloudflare-dns-sync`                    |
-| Daemon health          | `sudo cfsync status`                                                                     |
-| Recent daemon errors   | `sudo journalctl -u cloudflare-dns-syncd -n 100 --no-pager`                              |
-| Queue depth (per user) | `sqlite3 /home/<user>/.cloudflare-dns-sync/queue.sqlite 'SELECT COUNT(*) FROM events;'`  |
+| Hook didn't fire       | `/usr/local/cpanel/bin/manage_hooks list \| grep zonemirror`                    |
+| Daemon health          | `sudo zonemirror status`                                                                     |
+| Recent daemon errors   | `sudo journalctl -u zonemirrord -n 100 --no-pager`                              |
+| Queue depth (per user) | `sqlite3 /home/<user>/.zonemirror/queue.sqlite 'SELECT COUNT(*) FROM events;'`  |
 | Dead-letters           | `sqlite3 .../queue.sqlite 'SELECT id,last_error FROM events WHERE dead_at IS NOT NULL;'` |
-| Master key permissions | `ls -la /var/cpanel/cloudflare-dns-sync/master.key` (expect `root:root 0600`)            |
-| Tail plugin log        | `sudo cfsync logs -n 200`                                                                |
+| Master key permissions | `ls -la /var/cpanel/zonemirror/master.key` (expect `root:root 0600`)            |
+| Tail plugin log        | `sudo zonemirror logs -n 200`                                                                |
 
-For deeper symptom-to-fix mapping see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) and
-[`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md).
+For deeper symptom-to-fix mapping see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). For the attacker
+model and hardening summary, see [`SECURITY.md`](SECURITY.md).
 
 ---
 
@@ -212,13 +236,13 @@ For deeper symptom-to-fix mapping see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.m
 Keep config + queues (resumable on reinstall):
 
 ```bash
-sudo bash /usr/local/cpanel/3rdparty/cloudflare-dns-sync/packaging/uninstall.sh
+sudo bash /usr/local/cpanel/3rdparty/zonemirror/packaging/uninstall.sh
 ```
 
 Full purge (including all per-user state):
 
 ```bash
-sudo bash /usr/local/cpanel/3rdparty/cloudflare-dns-sync/packaging/uninstall.sh --purge
+sudo bash /usr/local/cpanel/3rdparty/zonemirror/packaging/uninstall.sh --purge
 ```
 
 ---
@@ -259,12 +283,12 @@ for v1.
 **What record types are supported?** A, AAAA, CNAME, MX, TXT, SRV, CAA. Apex `NS` is intentionally
 skipped (CF manages those). Unknown types are silently ignored.
 
-**Where do I see what changed?** `/var/cpanel/cloudflare-dns-sync/logs/cf-sync.log` is one JSON
+**Where do I see what changed?** `/var/cpanel/zonemirror/logs/zonemirror.log` is one JSON
 object per line. Filter with `jq`:
 
 ```bash
 jq -c 'select(.level == "info" and (.msg | startswith("created") or startswith("updated") or startswith("deleted")))' \
-  /var/cpanel/cloudflare-dns-sync/logs/cf-sync.log
+  /var/cpanel/zonemirror/logs/zonemirror.log
 ```
 
 ---
@@ -272,8 +296,8 @@ jq -c 'select(.level == "info" and (.msg | startswith("created") or startswith("
 ## Development
 
 ```bash
-git clone https://github.com/BusiRocket/cpanel-cloudflare-dns-sync.git
-cd cpanel-cloudflare-dns-sync
+git clone https://github.com/zonemirror/zonemirror.git
+cd zonemirror
 composer install
 composer check         # lint + phpstan + phpunit
 make format            # PHP + shell + prettier
@@ -293,9 +317,65 @@ Reproducing a hook locally without touching cPanel:
 
 ```bash
 echo '{"data":{"args":{"domain":"example.com"},"result":{"data":{"type":"A","name":"www.example.com.","address":"203.0.113.10","ttl":300}}}}' \
-  | CFSYNC_USER_HOME=/tmp/cfsync-dev \
+  | ZONEMIRROR_USER_HOME=/tmp/zonemirror-dev \
     php bin/on_add_zone_record
 ```
+
+---
+
+## Documentation
+
+| Document                                       | What's inside                                                               |
+| ---------------------------------------------- | --------------------------------------------------------------------------- |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Lifecycle of a DNS edit, layered dependencies, filesystem map, design notes |
+| [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)   | Throughput numbers, bottlenecks, symptom-to-fix mapping                     |
+| [`docs/adr/`](docs/adr/)                       | Architecture Decision Records                                               |
+| [`SECURITY.md`](SECURITY.md)                   | Threat model summary, hardening notes, private vulnerability reporting      |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md)           | Ground rules, quality gate, "add a new record type" walkthrough             |
+| [`CHANGELOG.md`](CHANGELOG.md)                 | Per-release notable changes (Keep a Changelog format)                       |
+| [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)     | Community standards (Contributor Covenant 2.1)                              |
+
+---
+
+## Project status
+
+**Beta.** v0.1.x — the architecture is stable and the test suite is green on PHP 8.1 / 8.2 / 8.3,
+but the plugin has not yet been battle-tested on a large fleet. Treat it as production-capable with
+monitoring; run `zonemirror status` on a schedule and tail the JSON log.
+
+Breaking changes between `0.x` releases are possible but will be called out in
+[`CHANGELOG.md`](CHANGELOG.md) under a dedicated **Breaking** heading.
+
+---
+
+## Versioning
+
+This project follows [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html):
+
+- **MAJOR** — incompatible changes to the on-disk config schema, the hook protocol, or the CLI
+  surface.
+- **MINOR** — backwards-compatible features (new record types, new CLI subcommands, new defaults).
+- **PATCH** — backwards-compatible fixes, performance work, and documentation.
+
+`VERSION` at the repo root is the single source of truth. Release tarballs are SHA-256-pinned;
+`zonemirror update` verifies the signature against the matching `.sha256` sidecar.
+
+The latest minor release line is the only one that receives security patches — see
+[`SECURITY.md`](SECURITY.md).
+
+---
+
+## Support
+
+- **Bugs / questions / feature requests** —
+  [open a GitHub issue](https://github.com/zonemirror/zonemirror/issues/new/choose).
+  Templates exist for both bug reports and feature requests.
+- **Security vulnerabilities** — do **not** open a public issue. Email `security@zonemirror.com`;
+  see [`SECURITY.md`](SECURITY.md) for the disclosure window.
+- **Code of conduct concerns** — `conduct@zonemirror.com`.
+
+This is a community-maintained project; there is no paid support tier. PRs that fix real-world
+issues are the fastest path to a resolved bug.
 
 ---
 
@@ -316,6 +396,28 @@ green CI matrix (PHP 8.1 / 8.2 / 8.3).
 
 Code of conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
+---
+
+## Acknowledgements
+
+- [cPanel & WHM](https://docs.cpanel.net/) — for the standardized hook system and LiveAPI that make
+  a plugin like this possible without core patches.
+- [Cloudflare API](https://developers.cloudflare.com/api/) — `Retry-After` and rate-limit headers
+  done the way every API should do them.
+- [PHPStan](https://phpstan.org/), [PHP-CS-Fixer](https://cs.symfony.com/), and
+  [PHPUnit](https://phpunit.de/) — the static-analysis and test stack that keeps the bar high.
+
+---
+
 ## License
 
-[MIT](LICENSE) © 2026 BusiRocket
+[MIT](LICENSE) © 2026 ZoneMirror
+
+---
+
+## Trademarks
+
+ZoneMirror is an independent project and is not affiliated with, endorsed by, or sponsored by
+Cloudflare, Inc., WebPros International, LLC, cPanel, LLC, or their affiliates. "Cloudflare",
+"cPanel", "WHM", and related marks are trademarks of their respective owners. Any references to
+those services in this project are for compatibility and interoperability purposes only.

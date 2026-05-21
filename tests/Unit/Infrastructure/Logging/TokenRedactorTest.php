@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Tests\Unit\Infrastructure\Logging;
+namespace ZoneMirror\Tests\Unit\Infrastructure\Logging;
 
-use CfSync\Infrastructure\Logging\TokenRedactor;
 use PHPUnit\Framework\TestCase;
+use ZoneMirror\Infrastructure\Logging\TokenRedactor;
 
 final class TokenRedactorTest extends TestCase
 {

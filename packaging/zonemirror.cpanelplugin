@@ -1,0 +1,23 @@
+{
+  "id": "zonemirror",
+  "name": "ZoneMirror",
+  "name_localizable": "ZoneMirror",
+  "vendor": "ZoneMirror",
+  "url": "https://github.com/zonemirror/zonemirror",
+  "items": [
+    {
+      "type": "link",
+      "id": "zonemirror-user",
+      "implementer": "/usr/local/cpanel/3rdparty/zonemirror/resources/cpanel/index.live.php",
+      "name": "ZoneMirror",
+      "name_localizable": "ZoneMirror",
+      "description": "Sync DNS Zone Editor changes to Cloudflare in real time.",
+      "feature": "zonemirror",
+      "group_id": "domains",
+      "order": 50,
+      "icon": "/cPanel_magic_revision_0/unprotected/zonemirror/icon.png",
+      "uri": "zonemirror/index.live.php",
+      "target": "_self"
+    }
+  ]
+}

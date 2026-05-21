@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Interface\Hook;
+namespace ZoneMirror\Interface\Hook;
 
-use CfSync\Domain\DnsEvent;
-use CfSync\Domain\EventAction;
-use CfSync\Infrastructure\Logging\FileLogger;
-use CfSync\Infrastructure\Logging\LogLevel;
-use CfSync\Infrastructure\Mapping\CpanelToCloudflareMapper;
-use CfSync\Infrastructure\Queue\SqliteQueue;
-use CfSync\Infrastructure\Storage\Paths;
-use CfSync\Infrastructure\Storage\SystemConfigStorage;
-use CfSync\Infrastructure\Storage\UserConfigMetadataReader;
+use ZoneMirror\Domain\DnsEvent;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Logging\LogLevel;
+use ZoneMirror\Infrastructure\Mapping\CpanelToCloudflareMapper;
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
+use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
+use ZoneMirror\Infrastructure\Storage\UserConfigMetadataReader;
 
 /**
  * Entry point for the four cPanel ZoneEdit hook scripts. Hooks run as the

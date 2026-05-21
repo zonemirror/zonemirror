@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Mapping;
+namespace ZoneMirror\Infrastructure\Mapping;
 
-use CfSync\Domain\DnsRecord;
-use CfSync\Domain\RecordType;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\RecordType;
 
 /**
  * Translates a raw cPanel/WHM ZoneEdit hook payload into a canonical

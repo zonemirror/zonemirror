@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Cloudflare;
+namespace ZoneMirror\Infrastructure\Cloudflare;
 
 use RuntimeException;
 

@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Tests\Unit\Infrastructure\Queue;
+namespace ZoneMirror\Tests\Unit\Infrastructure\Queue;
 
-use CfSync\Domain\DnsEvent;
-use CfSync\Domain\DnsRecord;
-use CfSync\Domain\EventAction;
-use CfSync\Domain\RecordType;
-use CfSync\Infrastructure\Queue\SqliteQueue;
-use CfSync\Infrastructure\Storage\Paths;
 use PHPUnit\Framework\TestCase;
+use ZoneMirror\Domain\DnsEvent;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Domain\RecordType;
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
+use ZoneMirror\Infrastructure\Storage\Paths;
 
 final class SqliteQueueTest extends TestCase
 {
@@ -18,7 +18,7 @@ final class SqliteQueueTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->home = sys_get_temp_dir() . '/cfsync-test-' . bin2hex(random_bytes(8)) . '-' . uniqid('', true);
+        $this->home = sys_get_temp_dir() . '/zonemirror-test-' . bin2hex(random_bytes(8)) . '-' . uniqid('', true);
         mkdir($this->home, 0700, true);
         putenv(Paths::ENV_USER_HOME . '=' . $this->home);
     }

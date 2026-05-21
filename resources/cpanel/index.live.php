@@ -8,9 +8,9 @@ declare(strict_types=1);
  * (cPanel) or posix_geteuid() to identify the caller.
  */
 
-use CfSync\Interface\Ui\UserController;
+use ZoneMirror\Interface\Ui\UserController;
 
-$autoload = '/usr/local/cpanel/3rdparty/cloudflare-dns-sync/vendor/autoload.php';
+$autoload = '/usr/local/cpanel/3rdparty/zonemirror/vendor/autoload.php';
 if (!is_file($autoload)) {
     http_response_code(500);
     echo 'Plugin not installed correctly: missing vendor/autoload.php';
@@ -34,36 +34,36 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Cloudflare DNS Sync</title>
+  <title>ZoneMirror</title>
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'; img-src 'self' data:; form-action 'self'; base-uri 'self'; frame-ancestors 'self'">
   <link rel="stylesheet" href="/cPanel_magic_revision_0/unprotected/cjt/css/cjt.css">
   <style>
-    .cfsync-card { max-width: 720px; margin: 1.5rem auto; padding: 1rem 1.25rem; border: 1px solid #ddd; border-radius: 6px; }
-    .cfsync-card h2 { margin-top: 0; }
-    .cfsync-row { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.5rem 0; }
-    .cfsync-row label { flex: 1 1 240px; }
-    .cfsync-error { color: #b00; }
-    .cfsync-ok { color: #060; }
-    .cfsync-muted { color: #666; font-size: 0.9em; }
+    .zonemirror-card { max-width: 720px; margin: 1.5rem auto; padding: 1rem 1.25rem; border: 1px solid #ddd; border-radius: 6px; }
+    .zonemirror-card h2 { margin-top: 0; }
+    .zonemirror-row { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0.5rem 0; }
+    .zonemirror-row label { flex: 1 1 240px; }
+    .zonemirror-error { color: #b00; }
+    .zonemirror-ok { color: #060; }
+    .zonemirror-muted { color: #666; font-size: 0.9em; }
     input[type=text], input[type=password] { width: 100%; padding: 0.4rem 0.5rem; }
-    .cfsync-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
+    .zonemirror-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
   </style>
 </head>
 <body>
-<div class="cfsync-card">
-  <h2>Cloudflare DNS Sync</h2>
+<div class="zonemirror-card">
+  <h2>ZoneMirror</h2>
 
   <?php if (!$vm['allowed']): ?>
-    <p class="cfsync-error">This plugin is not enabled for your account by the server administrator.</p>
+    <p class="zonemirror-error">This plugin is not enabled for your account by the server administrator.</p>
   <?php endif; ?>
 
   <?php if ($vm['saved']): ?>
-    <p class="cfsync-ok">Settings saved.</p>
+    <p class="zonemirror-ok">Settings saved.</p>
   <?php endif; ?>
 
   <?php foreach ($vm['errors'] as $err): ?>
-    <p class="cfsync-error"><?= $h($err) ?></p>
+    <p class="zonemirror-error"><?= $h($err) ?></p>
   <?php endforeach; ?>
 
   <?php if ($vm['test_result'] !== null): ?>
@@ -76,36 +76,36 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
 
       <fieldset>
         <legend>Connection</legend>
-        <div class="cfsync-row">
+        <div class="zonemirror-row">
           <label>Cloudflare API Token (leave blank to keep current)
             <input type="password" name="token" autocomplete="new-password"
                    placeholder="<?= $vm['token_set'] ? '••••••••' : 'cf-XXXX...' ?>">
           </label>
         </div>
-        <div class="cfsync-row">
+        <div class="zonemirror-row">
           <label>Zone (domain)
             <input type="text" name="zone_name" value="<?= $h($vm['zone_name']) ?>" placeholder="example.com">
           </label>
         </div>
-        <div class="cfsync-row">
+        <div class="zonemirror-row">
           <button type="submit" name="action" value="test">Test connection</button>
         </div>
       </fieldset>
 
       <fieldset>
         <legend>Defaults</legend>
-        <div class="cfsync-row">
+        <div class="zonemirror-row">
           <label>
             <input type="checkbox" name="defaults_proxied" <?= $vm['defaults_proxied'] ? 'checked' : '' ?>>
             Proxy A / AAAA / CNAME records by default
           </label>
         </div>
-        <p class="cfsync-muted">_acme-challenge and _dmarc records are never proxied.</p>
+        <p class="zonemirror-muted">_acme-challenge and _dmarc records are never proxied.</p>
       </fieldset>
 
       <fieldset>
         <legend>Sync</legend>
-        <div class="cfsync-row">
+        <div class="zonemirror-row">
           <label>
             <input type="checkbox" name="enabled" <?= $vm['enabled'] ? 'checked' : '' ?>>
             Enable real-time sync to Cloudflare
@@ -113,7 +113,7 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
         </div>
       </fieldset>
 
-      <div class="cfsync-actions">
+      <div class="zonemirror-actions">
         <button type="submit" name="action" value="save">Save</button>
       </div>
     </form>
@@ -121,7 +121,7 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
     <h3>Queue</h3>
     <p>Pending: <strong><?= (int) $vm['queue_depth'] ?></strong> &middot;
        Dead-lettered: <strong><?= (int) $vm['dead_letters'] ?></strong></p>
-    <p class="cfsync-muted">User: <?= $h($vm['user']) ?></p>
+    <p class="zonemirror-muted">User: <?= $h($vm['user']) ?></p>
   <?php endif; ?>
 </div>
 </body>

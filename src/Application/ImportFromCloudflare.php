@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Application;
+namespace ZoneMirror\Application;
 
-use CfSync\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
 
 /**
  * One-shot read of the live Cloudflare zone, returned to the UI so the user

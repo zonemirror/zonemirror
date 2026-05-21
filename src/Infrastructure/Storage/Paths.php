@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Storage;
+namespace ZoneMirror\Infrastructure\Storage;
 
 /**
  * Canonical filesystem layout for the plugin.
  *
  * - System defaults and the master encryption key live under
- *   /var/cpanel/cloudflare-dns-sync/ (root-owned, 0700).
+ *   /var/cpanel/zonemirror/ (root-owned, 0700).
  * - Per-user state (encrypted token, queue) lives under
- *   <user-home>/.cloudflare-dns-sync/ (user-owned, 0700) so hooks running as
+ *   <user-home>/.zonemirror/ (user-owned, 0700) so hooks running as
  *   the cPanel user can write to their own queue without escalating to root.
  *
  * All paths can be overridden via environment variables to support tests and
@@ -18,11 +18,11 @@ namespace CfSync\Infrastructure\Storage;
  */
 final class Paths
 {
-    public const ENV_SYSTEM_DIR = 'CFSYNC_SYSTEM_DIR';
-    public const ENV_USER_HOME = 'CFSYNC_USER_HOME';
+    public const ENV_SYSTEM_DIR = 'ZONEMIRROR_SYSTEM_DIR';
+    public const ENV_USER_HOME = 'ZONEMIRROR_USER_HOME';
 
-    private const DEFAULT_SYSTEM_DIR = '/var/cpanel/cloudflare-dns-sync';
-    private const USER_SUBDIR = '.cloudflare-dns-sync';
+    private const DEFAULT_SYSTEM_DIR = '/var/cpanel/zonemirror';
+    private const USER_SUBDIR = '.zonemirror';
 
     public static function systemDir(): string
     {
@@ -48,7 +48,7 @@ final class Paths
 
     public static function logFile(): string
     {
-        return self::systemDir() . '/logs/cf-sync.log';
+        return self::systemDir() . '/logs/zonemirror.log';
     }
 
     public static function userDir(string $user): string

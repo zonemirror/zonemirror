@@ -1,5 +1,5 @@
 {
-  "name": "cloudflare-cpanel-formatting",
+  "name": "zonemirror-formatting",
   "private": true,
   "devDependencies": {
     "prettier": "^3.8.1"

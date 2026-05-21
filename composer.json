@@ -1,5 +1,5 @@
 {
-  "name": "busirocket/cpanel-cloudflare-dns-sync",
+  "name": "zonemirror/zonemirror",
   "description": "cPanel plugin that syncs DNS changes from cPanel Zone Editor to Cloudflare in real time.",
   "type": "project",
   "license": "MIT",
@@ -14,8 +14,8 @@
   ],
   "authors": [
     {
-      "name": "BusiRocket",
-      "homepage": "https://github.com/BusiRocket"
+      "name": "ZoneMirror",
+      "homepage": "https://github.com/zonemirror"
     }
   ],
   "require": {
@@ -37,12 +37,12 @@
   },
   "autoload": {
     "psr-4": {
-      "CfSync\\": "src/"
+      "ZoneMirror\\": "src/"
     }
   },
   "autoload-dev": {
     "psr-4": {
-      "CfSync\\Tests\\": "tests/"
+      "ZoneMirror\\Tests\\": "tests/"
     }
   },
   "scripts": {

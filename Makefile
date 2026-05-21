@@ -39,14 +39,14 @@ format-prettier:
 	fi
 
 dist:
-	rm -rf dist && mkdir -p dist/cloudflare-dns-sync
+	rm -rf dist && mkdir -p dist/zonemirror
 	rsync -a --exclude='.git' --exclude='.github' --exclude='tests' \
 		--exclude='node_modules' --exclude='dist' --exclude='*.log' \
-		./ dist/cloudflare-dns-sync/
-	composer install --working-dir=dist/cloudflare-dns-sync --no-dev --prefer-dist --optimize-autoloader
-	tar -czf dist/cloudflare-dns-sync.tar.gz -C dist cloudflare-dns-sync
-	(cd dist && sha256sum cloudflare-dns-sync.tar.gz > cloudflare-dns-sync.tar.gz.sha256)
-	@echo "Built dist/cloudflare-dns-sync.tar.gz"
+		./ dist/zonemirror/
+	composer install --working-dir=dist/zonemirror --no-dev --prefer-dist --optimize-autoloader
+	tar -czf dist/zonemirror.tar.gz -C dist zonemirror
+	(cd dist && sha256sum zonemirror.tar.gz > zonemirror.tar.gz.sha256)
+	@echo "Built dist/zonemirror.tar.gz"
 
 clean:
 	rm -rf vendor node_modules dist .phpunit.cache coverage* .php-cs-fixer.cache

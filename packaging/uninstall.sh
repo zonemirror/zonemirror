@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Uninstalls the Cloudflare DNS Sync plugin. Leaves /var/cpanel/cloudflare-dns-sync
+# Uninstalls the ZoneMirror plugin. Leaves /var/cpanel/zonemirror
 # in place (contains config + queues) so reinstall recovers state. Pass --purge
 # to also remove that directory and per-user state.
 
-PLUGIN_ID="cloudflare-dns-sync"
+PLUGIN_ID="zonemirror"
 PREFIX="/usr/local/cpanel/3rdparty/${PLUGIN_ID}"
 SYSTEM_DIR="/var/cpanel/${PLUGIN_ID}"
 SERVICE_NAME="${PLUGIN_ID}d"
@@ -14,7 +14,7 @@ UPDATER_SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.service"
 UPDATER_TIMER_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.timer"
 LIVEAPI_DIR="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
 WHM_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/${PLUGIN_ID}"
-CLI_SYMLINK="/usr/local/bin/cfsync"
+CLI_SYMLINK="/usr/local/bin/zonemirror"
 
 PURGE=false
 for arg in "$@"; do
@@ -37,7 +37,7 @@ if [[ -d "$PREFIX/packaging" ]]; then
   bash "$PREFIX/packaging/unregister-hooks.sh" || true
 fi
 
-/usr/local/cpanel/bin/unregister_cpanelplugin "$PREFIX/packaging/cloudflare_dns_sync.cpanelplugin" 2>/dev/null || true
+/usr/local/cpanel/bin/unregister_cpanelplugin "$PREFIX/packaging/zonemirror.cpanelplugin" 2>/dev/null || true
 
 rm -f "$CLI_SYMLINK"
 rm -rf "$PREFIX" "$LIVEAPI_DIR" "$WHM_DIR"
@@ -46,7 +46,7 @@ if $PURGE; then
   rm -rf "$SYSTEM_DIR"
   for h in /home/*; do
     user="$(basename "$h")"
-    rm -rf "/home/$user/.cloudflare-dns-sync"
+    rm -rf "/home/$user/.zonemirror"
   done
 fi
 

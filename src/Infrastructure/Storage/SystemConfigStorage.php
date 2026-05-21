@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Storage;
+namespace ZoneMirror\Infrastructure\Storage;
 
 use RuntimeException;
 
 /**
  * WHM-admin level configuration: global defaults, allowlist of users that may
  * enable the plugin, and rate-limit guardrails. Stored under
- * /var/cpanel/cloudflare-dns-sync/system.json owned by root:root, mode 0600.
+ * /var/cpanel/zonemirror/system.json owned by root:root, mode 0600.
  *
  * @phpstan-type SystemConfig array{
  *     defaults: array{proxied: bool, ttl: int},

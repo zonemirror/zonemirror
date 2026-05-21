@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Cloudflare;
+namespace ZoneMirror\Infrastructure\Cloudflare;
 
 use CurlHandle;
 use RuntimeException;
@@ -18,7 +18,7 @@ use RuntimeException;
 final class CloudflareApiClient
 {
     private const BASE_URL = 'https://api.cloudflare.com/client/v4';
-    private const USER_AGENT = 'cpanel-cloudflare-dns-sync/1.0 (+https://github.com/BusiRocket/cpanel-cloudflare-dns-sync)';
+    private const USER_AGENT = 'zonemirror/1.0 (+https://github.com/zonemirror/zonemirror)';
     private const TIMEOUT_SECONDS = 20;
 
     private ?CurlHandle $handle = null;

@@ -42,7 +42,7 @@ Open a GitHub issue with:
 
 - cPanel/WHM version
 - PHP version
-- Excerpt of `/var/cpanel/cloudflare-dns-sync/logs/cf-sync.log` (tokens are auto-redacted by the
+- Excerpt of `/var/cpanel/zonemirror/logs/zonemirror.log` (tokens are auto-redacted by the
   logger, but double-check)
 - Minimal reproduction steps
 

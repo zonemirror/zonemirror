@@ -10,12 +10,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - One-line installer (`packaging/bootstrap.sh`) — curl-able from GitHub raw, resolves the latest
-  release tag, verifies SHA-256, stages under `/opt/cloudflare-dns-sync/releases/<version>/`, swaps
-  the `/opt/cloudflare-dns-sync/current` symlink, and hands off to `packaging/install.sh`.
-- `cfsync` operator CLI installed to `/usr/local/bin/cfsync`. Subcommands: `version`, `check`,
+  release tag, verifies SHA-256, stages under `/opt/zonemirror/releases/<version>/`, swaps
+  the `/opt/zonemirror/current` symlink, and hands off to `packaging/install.sh`.
+- `zonemirror` operator CLI installed to `/usr/local/bin/zonemirror`. Subcommands: `version`, `check`,
   `update [--dry-run]`, `status`, `auto-update on|off`, `logs [-n N]`, `help`.
-- Auto-update systemd timer (`cloudflare-dns-syncd-updater.{service,timer}`) — disabled by default,
-  enabled with `sudo cfsync auto-update on`. Daily with 0-3 h randomized delay; persistent across
+- Auto-update systemd timer (`zonemirrord-updater.{service,timer}`) — disabled by default,
+  enabled with `sudo zonemirror auto-update on`. Daily with 0-3 h randomized delay; persistent across
   boots; honors release-tarball SHA-256.
 - `VERSION` file at the repo root as the single source of truth; release workflow rewrites it to the
   git tag at build time.
@@ -41,7 +41,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Security
 
 - Cloudflare API tokens encrypted at rest with XChaCha20-Poly1305 (sodium) or AES-256-GCM (OpenSSL
-  fallback). Master key stored root-only at `/var/cpanel/cloudflare-dns-sync/master.key`.
+  fallback). Master key stored root-only at `/var/cpanel/zonemirror/master.key`.
 - All log output passes through `TokenRedactor`.
 - Constant-time CSRF verification (`hash_equals`) with rotation on success to prevent token replay.
 - `_acme-challenge` and `_dmarc` records are never proxied.

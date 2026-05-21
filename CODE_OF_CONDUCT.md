@@ -25,7 +25,7 @@ Examples of unacceptable behavior:
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the project
-maintainers at `conduct@busirocket.com`.
+maintainers at `conduct@zonemirror.com`.
 
 This Code of Conduct is adapted from the
 [Contributor Covenant](https://www.contributor-covenant.org/), version 2.1.

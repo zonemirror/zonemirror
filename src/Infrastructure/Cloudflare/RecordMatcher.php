@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace CfSync\Infrastructure\Cloudflare;
+namespace ZoneMirror\Infrastructure\Cloudflare;
 
-use CfSync\Domain\DnsRecord;
-use CfSync\Domain\RecordType;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\RecordType;
 
 /**
  * Finds the existing Cloudflare record (if any) that corresponds to a local
