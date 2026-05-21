@@ -40,6 +40,13 @@ make hooks
 The pre-commit hook runs `composer run lint:php` and `npm run lint:prettier`. Skip on a single
 commit with `git commit --no-verify`.
 
+### Testing on a real cPanel server
+
+If your change touches hooks, the daemon, packaging, or the cPanel/WHM UI, PHPUnit alone cannot
+prove it works end to end. See [`docs/INSTALL_FROM_SOURCE.md`](docs/INSTALL_FROM_SOURCE.md) for the
+supported flow to install a branch or commit on a real cPanel/WHM server, including the dry-run +
+allowlist + per-user safety belts that let you iterate without risking customer DNS.
+
 ## Adding a new record type
 
 1. Add the variant to `src/Domain/RecordType.php`.
