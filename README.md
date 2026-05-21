@@ -82,7 +82,7 @@ path — so it's something you can put on a fleet of cPanel servers and not thin
 | Dry-run kill switch                 | no                      | WHM toggle                       |
 | Token redaction in logs             | no                      | yes                              |
 | CSRF + strict CSP on UI             | no                      | yes                              |
-| One-line install, auto-update       | no                      | `zonemirror update`                  |
+| One-line install, auto-update       | no                      | `zonemirror update`              |
 | 33 unit tests + PHPStan level 8     | no                      | yes                              |
 
 ---
@@ -132,9 +132,8 @@ curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packagin
 ```
 
 This pulls the latest GitHub release tarball, verifies its SHA-256, stages it under
-`/opt/zonemirror/releases/<version>/`, symlinks `/opt/zonemirror/current` to it,
-and runs `packaging/install.sh`. Re-running upgrades in place and keeps the last three releases for
-rollback.
+`/opt/zonemirror/releases/<version>/`, symlinks `/opt/zonemirror/current` to it, and runs
+`packaging/install.sh`. Re-running upgrades in place and keeps the last three releases for rollback.
 
 Pin a specific version:
 
@@ -155,8 +154,8 @@ sudo bash packaging/install.sh
 ### After installing
 
 1. **WHM → Plugins → ZoneMirror** — set global defaults / allowlist / dry-run mode.
-2. **cPanel → Domains → ZoneMirror** (per allowlisted user) — paste the Cloudflare API
-   token, pick the zone, "Test connection", **Enable**.
+2. **cPanel → Domains → ZoneMirror** (per allowlisted user) — paste the Cloudflare API token, pick
+   the zone, "Test connection", **Enable**.
 3. Tail the log on the server:
    ```bash
    sudo tail -f /var/cpanel/zonemirror/logs/zonemirror.log
@@ -218,13 +217,13 @@ alongside it on the GitHub release page.
 
 | Symptom                | Command                                                                                  |
 | ---------------------- | ---------------------------------------------------------------------------------------- |
-| Hook didn't fire       | `/usr/local/cpanel/bin/manage_hooks list \| grep zonemirror`                    |
-| Daemon health          | `sudo zonemirror status`                                                                     |
-| Recent daemon errors   | `sudo journalctl -u zonemirrord -n 100 --no-pager`                              |
-| Queue depth (per user) | `sqlite3 /home/<user>/.zonemirror/queue.sqlite 'SELECT COUNT(*) FROM events;'`  |
+| Hook didn't fire       | `/usr/local/cpanel/bin/manage_hooks list \| grep zonemirror`                             |
+| Daemon health          | `sudo zonemirror status`                                                                 |
+| Recent daemon errors   | `sudo journalctl -u zonemirrord -n 100 --no-pager`                                       |
+| Queue depth (per user) | `sqlite3 /home/<user>/.zonemirror/queue.sqlite 'SELECT COUNT(*) FROM events;'`           |
 | Dead-letters           | `sqlite3 .../queue.sqlite 'SELECT id,last_error FROM events WHERE dead_at IS NOT NULL;'` |
-| Master key permissions | `ls -la /var/cpanel/zonemirror/master.key` (expect `root:root 0600`)            |
-| Tail plugin log        | `sudo zonemirror logs -n 200`                                                                |
+| Master key permissions | `ls -la /var/cpanel/zonemirror/master.key` (expect `root:root 0600`)                     |
+| Tail plugin log        | `sudo zonemirror logs -n 200`                                                            |
 
 For deeper symptom-to-fix mapping see [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md). For the attacker
 model and hardening summary, see [`SECURITY.md`](SECURITY.md).
@@ -283,8 +282,8 @@ for v1.
 **What record types are supported?** A, AAAA, CNAME, MX, TXT, SRV, CAA. Apex `NS` is intentionally
 skipped (CF manages those). Unknown types are silently ignored.
 
-**Where do I see what changed?** `/var/cpanel/zonemirror/logs/zonemirror.log` is one JSON
-object per line. Filter with `jq`:
+**Where do I see what changed?** `/var/cpanel/zonemirror/logs/zonemirror.log` is one JSON object per
+line. Filter with `jq`:
 
 ```bash
 jq -c 'select(.level == "info" and (.msg | startswith("created") or startswith("updated") or startswith("deleted")))' \
@@ -368,8 +367,8 @@ The latest minor release line is the only one that receives security patches —
 ## Support
 
 - **Bugs / questions / feature requests** —
-  [open a GitHub issue](https://github.com/zonemirror/zonemirror/issues/new/choose).
-  Templates exist for both bug reports and feature requests.
+  [open a GitHub issue](https://github.com/zonemirror/zonemirror/issues/new/choose). Templates exist
+  for both bug reports and feature requests.
 - **Security vulnerabilities** — do **not** open a public issue. Email `security@zonemirror.com`;
   see [`SECURITY.md`](SECURITY.md) for the disclosure window.
 - **Code of conduct concerns** — `conduct@zonemirror.com`.

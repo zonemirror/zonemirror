@@ -9,8 +9,8 @@ labels: bug
 
 - cPanel/WHM version:
 - PHP version (`php -v`):
-- Plugin version (`cat /usr/local/cpanel/3rdparty/zonemirror/composer.json | grep version`
-  or `git log -1 --format=%h`):
+- Plugin version (`cat /usr/local/cpanel/3rdparty/zonemirror/composer.json | grep version` or
+  `git log -1 --format=%h`):
 
 **What did you do?** A minimal sequence of steps.
 
