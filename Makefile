@@ -1,14 +1,20 @@
 SHELL := /bin/bash
 
-.PHONY: help install check test analyse format format-php format-sh format-prettier dist clean
+.PHONY: help install hooks check test analyse format format-php format-sh format-prettier dist clean
 
 help:
 	@echo "make install         Install composer + npm deps"
+	@echo "make hooks           Enable versioned git hooks under .githooks/ (pre-commit lint)"
 	@echo "make check           Lint + phpstan + phpunit (CI gate)"
 	@echo "make test            Run PHPUnit"
 	@echo "make analyse         Run PHPStan"
 	@echo "make format          Format PHP + shell + prettier"
 	@echo "make dist            Build release tarball under dist/"
+
+hooks:
+	git config core.hooksPath .githooks
+	@echo "Git hooks enabled. Pre-commit will run php-cs-fixer + prettier."
+	@echo "Skip on a single commit with: git commit --no-verify"
 
 install:
 	composer install

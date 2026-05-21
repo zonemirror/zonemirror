@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook for ZoneMirror.
+# Mirrors the lint gates that CI enforces so failures are caught locally.
+# Skip on a one-off basis with: git commit --no-verify
+#
+# Install once per clone: make hooks   (sets git config core.hooksPath)
+
+set -euo pipefail
+
+fail=0
+
+if [ -f composer.json ] && command -v composer >/dev/null 2>&1; then
+  echo "→ php-cs-fixer (dry-run)"
+  if ! composer run -q lint:php; then
+    echo "✗ php-cs-fixer failed. Fix with: composer run format:php" >&2
+    fail=1
+  fi
+fi
+
+if [ -f package.json ] && command -v npm >/dev/null 2>&1; then
+  echo "→ prettier --check"
+  if ! npm run -s lint:prettier; then
+    echo "✗ Prettier failed. Fix with: npm run format:prettier" >&2
+    fail=1
+  fi
+fi
+
+exit "$fail"

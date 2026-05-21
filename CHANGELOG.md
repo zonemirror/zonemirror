@@ -10,13 +10,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 
 - One-line installer (`packaging/bootstrap.sh`) — curl-able from GitHub raw, resolves the latest
-  release tag, verifies SHA-256, stages under `/opt/zonemirror/releases/<version>/`, swaps
-  the `/opt/zonemirror/current` symlink, and hands off to `packaging/install.sh`.
-- `zonemirror` operator CLI installed to `/usr/local/bin/zonemirror`. Subcommands: `version`, `check`,
-  `update [--dry-run]`, `status`, `auto-update on|off`, `logs [-n N]`, `help`.
-- Auto-update systemd timer (`zonemirrord-updater.{service,timer}`) — disabled by default,
-  enabled with `sudo zonemirror auto-update on`. Daily with 0-3 h randomized delay; persistent across
-  boots; honors release-tarball SHA-256.
+  release tag, verifies SHA-256, stages under `/opt/zonemirror/releases/<version>/`, swaps the
+  `/opt/zonemirror/current` symlink, and hands off to `packaging/install.sh`.
+- `zonemirror` operator CLI installed to `/usr/local/bin/zonemirror`. Subcommands: `version`,
+  `check`, `update [--dry-run]`, `status`, `auto-update on|off`, `logs [-n N]`, `help`.
+- Auto-update systemd timer (`zonemirrord-updater.{service,timer}`) — disabled by default, enabled
+  with `sudo zonemirror auto-update on`. Daily with 0-3 h randomized delay; persistent across boots;
+  honors release-tarball SHA-256.
 - `VERSION` file at the repo root as the single source of truth; release workflow rewrites it to the
   git tag at build time.
 - `VersionReader` infrastructure component, surfaced on the WHM admin UI as a version pill next to

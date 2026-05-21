@@ -28,6 +28,18 @@ make format             # PHP + shell + prettier
 
 CI runs the same commands on PHP 8.1, 8.2, and 8.3.
 
+### Pre-commit hook (recommended)
+
+Enable the versioned git hook once per clone so formatting failures are caught locally before they
+reach CI:
+
+```bash
+make hooks
+```
+
+The pre-commit hook runs `composer run lint:php` and `npm run lint:prettier`. Skip on a single
+commit with `git commit --no-verify`.
+
 ## Adding a new record type
 
 1. Add the variant to `src/Domain/RecordType.php`.
@@ -42,8 +54,8 @@ Open a GitHub issue with:
 
 - cPanel/WHM version
 - PHP version
-- Excerpt of `/var/cpanel/zonemirror/logs/zonemirror.log` (tokens are auto-redacted by the
-  logger, but double-check)
+- Excerpt of `/var/cpanel/zonemirror/logs/zonemirror.log` (tokens are auto-redacted by the logger,
+  but double-check)
 - Minimal reproduction steps
 
 ## Security issues

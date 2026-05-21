@@ -62,16 +62,16 @@ WorkerLoop::run                  ← systemd-supervised, runs as root
 
 ## Filesystem map
 
-| Path                                               | Owner     | Mode | Purpose                                  |
-| -------------------------------------------------- | --------- | ---- | ---------------------------------------- |
-| `/usr/local/cpanel/3rdparty/zonemirror/`  | root:root | 0755 | Plugin code + vendor/                    |
-| `/var/cpanel/zonemirror/system.json`      | root:root | 0600 | WHM-admin defaults                       |
-| `/var/cpanel/zonemirror/master.key`       | root:root | 0600 | 32-byte token-encryption key             |
-| `/var/cpanel/zonemirror/enrolled-users`   | root:root | 0644 | Newline-separated list of opted-in users |
+| Path                                         | Owner     | Mode | Purpose                                  |
+| -------------------------------------------- | --------- | ---- | ---------------------------------------- |
+| `/usr/local/cpanel/3rdparty/zonemirror/`     | root:root | 0755 | Plugin code + vendor/                    |
+| `/var/cpanel/zonemirror/system.json`         | root:root | 0600 | WHM-admin defaults                       |
+| `/var/cpanel/zonemirror/master.key`          | root:root | 0600 | 32-byte token-encryption key             |
+| `/var/cpanel/zonemirror/enrolled-users`      | root:root | 0644 | Newline-separated list of opted-in users |
 | `/var/cpanel/zonemirror/logs/zonemirror.log` | root:root | 0640 | JSON-lines log (token-redacted)          |
-| `/home/<user>/.zonemirror/config.json`    | `<user>`  | 0600 | Per-user settings + encrypted token      |
-| `/home/<user>/.zonemirror/queue.sqlite`   | `<user>`  | 0600 | Per-user pending DNS events              |
-| `/etc/systemd/system/zonemirrord.service` | root:root | 0644 | systemd unit                             |
+| `/home/<user>/.zonemirror/config.json`       | `<user>`  | 0600 | Per-user settings + encrypted token      |
+| `/home/<user>/.zonemirror/queue.sqlite`      | `<user>`  | 0600 | Per-user pending DNS events              |
+| `/etc/systemd/system/zonemirrord.service`    | root:root | 0644 | systemd unit                             |
 
 ## Why these design choices
 
