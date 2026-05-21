@@ -1,0 +1,5 @@
+# CODEOWNERS for ZoneMirror.
+# Lines later in the file override earlier matches.
+# See https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-security/customizing-your-repository/about-code-owners
+
+* @CristianDeluxe
