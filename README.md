@@ -162,6 +162,10 @@ composer install --no-dev --prefer-dist --optimize-autoloader
 sudo bash packaging/install.sh
 ```
 
+> Testing a branch, a pull request, or unreleased code on a real cPanel server? See
+> [`docs/INSTALL_FROM_SOURCE.md`](docs/INSTALL_FROM_SOURCE.md) for the full debug workflow, with
+> dry-run, allowlist, and per-user safety belts so customer DNS is never at risk.
+
 ### After installing
 
 1. **WHM → Plugins → ZoneMirror** — set global defaults / allowlist / dry-run mode.
@@ -330,6 +334,9 @@ echo '{"data":{"args":{"domain":"example.com"},"result":{"data":{"type":"A","nam
   | ZONEMIRROR_USER_HOME=/tmp/zonemirror-dev \
     php bin/on_add_zone_record
 ```
+
+For end-to-end testing on a real cPanel server (hooks, daemon, packaging, UI) without cutting a
+release, see [`docs/INSTALL_FROM_SOURCE.md`](docs/INSTALL_FROM_SOURCE.md).
 
 ---
 
