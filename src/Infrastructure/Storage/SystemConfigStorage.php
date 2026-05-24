@@ -108,11 +108,14 @@ final class SystemConfigStorage
      */
     private function defaults(): array
     {
+        // Fail-safe defaults: a freshly installed server with no system.json
+        // yet must NOT push to Cloudflare. The admin opts in by enrolling
+        // users (allowed_users) and explicitly disabling dry-run from WHM.
         return [
             'defaults' => ['proxied' => false, 'ttl' => 300],
-            'allowed_users' => 'all',
+            'allowed_users' => [],
             'rate_limit_rps' => 5,
-            'dry_run' => false,
+            'dry_run' => true,
         ];
     }
 }
