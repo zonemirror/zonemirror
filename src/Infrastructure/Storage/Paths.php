@@ -76,6 +76,16 @@ final class Paths
             return '/root';
         }
 
+        // cPanel/CloudLinux hosts often place users outside /home (e.g.
+        // /home2 when the original partition fills). Trust the OS over
+        // a hardcoded prefix.
+        if (function_exists('posix_getpwnam')) {
+            $pw = posix_getpwnam($user);
+            if (is_array($pw) && isset($pw['dir']) && is_string($pw['dir']) && $pw['dir'] !== '') {
+                return $pw['dir'];
+            }
+        }
+
         return '/home/' . $user;
     }
 }
