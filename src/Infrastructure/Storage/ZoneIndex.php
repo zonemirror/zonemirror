@@ -171,30 +171,44 @@ final class ZoneIndex
             throw new RuntimeException('Unable to create zone-index dir: ' . $dir);
         }
 
+        // The index is 0644 root-owned: every cPanel user-side PHP can read
+        // it (to render their per-domain status), but only the daemon
+        // (root) writes. If we are not the file's owner — i.e. running
+        // inside an LSPHP user request — open in read-only URI mode so
+        // SQLite skips `PRAGMA journal_mode` writes that would otherwise
+        // raise SQLITE_READONLY. The schema migration is also skipped:
+        // the daemon performs it on first start.
         $newFile = !is_file($this->path);
+        $effectiveUid = function_exists('posix_geteuid') ? posix_geteuid() : -1;
+        $ownerUid = $newFile ? $effectiveUid : @fileowner($this->path);
+        $canWrite = $newFile || ($effectiveUid !== -1 && $ownerUid === $effectiveUid);
 
-        $pdo = new PDO('sqlite:' . $this->path);
+        $dsn = $canWrite
+            ? 'sqlite:' . $this->path
+            : 'sqlite:file:' . $this->path . '?mode=ro';
+
+        $pdo = new PDO($dsn);
         $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-        $pdo->exec('PRAGMA journal_mode = WAL');
-        $pdo->exec('PRAGMA synchronous = NORMAL');
         $pdo->exec('PRAGMA busy_timeout = 5000');
-        $pdo->exec(
-            'CREATE TABLE IF NOT EXISTS zones (
-                cf_zone_id      TEXT PRIMARY KEY,
-                name            TEXT NOT NULL,
-                cf_account_id   TEXT NOT NULL DEFAULT "",
-                admin_token_id  TEXT NOT NULL,
-                last_seen_at    INTEGER NOT NULL
-            )'
-        );
-        $pdo->exec('CREATE INDEX IF NOT EXISTS zones_by_name ON zones(name)');
-        $pdo->exec('CREATE INDEX IF NOT EXISTS zones_by_token ON zones(admin_token_id)');
 
-        if ($newFile) {
-            // 0644 so the cPanel user-side PHP can read the index. The
-            // row content is non-sensitive (zone id + name + admin token
-            // *id*, no plaintext token material).
-            @chmod($this->path, 0644);
+        if ($canWrite) {
+            $pdo->exec('PRAGMA journal_mode = WAL');
+            $pdo->exec('PRAGMA synchronous = NORMAL');
+            $pdo->exec(
+                'CREATE TABLE IF NOT EXISTS zones (
+                    cf_zone_id      TEXT PRIMARY KEY,
+                    name            TEXT NOT NULL,
+                    cf_account_id   TEXT NOT NULL DEFAULT "",
+                    admin_token_id  TEXT NOT NULL,
+                    last_seen_at    INTEGER NOT NULL
+                )'
+            );
+            $pdo->exec('CREATE INDEX IF NOT EXISTS zones_by_name ON zones(name)');
+            $pdo->exec('CREATE INDEX IF NOT EXISTS zones_by_token ON zones(admin_token_id)');
+
+            if ($newFile) {
+                @chmod($this->path, 0644);
+            }
         }
 
         $this->pdo = $pdo;
