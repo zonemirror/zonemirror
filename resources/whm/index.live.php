@@ -83,10 +83,12 @@ $cfDeepLink = 'https://dash.cloudflare.com/profile/api-tokens?'
         'name' => 'ZoneMirror — DNS sync (cPanel)',
     ]);
 
-// The server's main outbound IP — we recommend the admin restricts
-// each Cloudflare token to it via "Client IP Address Filtering" in
-// the token form. cPanel writes the main IP to /var/cpanel/mainip;
-// fall back to /etc/wwwacct.conf and finally to hostname -I.
+// The server's main outbound IP — surfaced in the "Hardening" disclosure
+// under Advanced settings so the operator can copy/paste it into the
+// Cloudflare token's "Client IP Address Filtering" field. Cloudflare's
+// token-template URL does not support pre-filling this, so it has to be
+// added by hand after the fact. cPanel writes the main IP to
+// /var/cpanel/mainip; fall back to /etc/wwwacct.conf.
 $serverIp = '';
 foreach (['/var/cpanel/mainip'] as $p) {
     $raw = @file_get_contents($p);
@@ -268,20 +270,6 @@ $justConnected = $tokensVm['message'] !== '';
       We&rsquo;ll open Cloudflare with the right permissions already selected.
     </p>
 
-    <?php if ($serverIp !== ''): ?>
-      <div class="ip-hint">
-        <div class="ip-hint-label">For maximum security, lock this token to this server&rsquo;s IP:</div>
-        <div class="ip-hint-value">
-          <code id="zm-server-ip"><?= $h($serverIp) ?></code>
-        </div>
-        <div class="muted" style="margin-top: 0.35rem;">
-          In Cloudflare&rsquo;s token form, under <strong>Client IP Address Filtering</strong>,
-          set <em>Operator</em> = <strong>Is in</strong> and <em>Value</em> = <code><?= $h($serverIp) ?></code>.
-          Optional, but recommended.
-        </div>
-      </div>
-    <?php endif; ?>
-
     <details class="connect-more" style="max-width: 560px; margin: 1.5rem auto 0; text-align: left;">
       <summary>I already created a token in Cloudflare</summary>
       <div class="body">
@@ -362,17 +350,6 @@ $justConnected = $tokensVm['message'] !== '';
           Open Cloudflare
         </a>
 
-        <?php if ($serverIp !== ''): ?>
-          <div class="ip-hint" style="margin: 1rem 0 0;">
-            <div class="ip-hint-label">Recommended IP restriction:</div>
-            <div class="ip-hint-value"><code><?= $h($serverIp) ?></code></div>
-            <div class="muted" style="margin-top: 0.3rem;">
-              Cloudflare token form &rarr; <strong>Client IP Address Filtering</strong>
-              &rarr; <em>Is in</em> = <code><?= $h($serverIp) ?></code>.
-            </div>
-          </div>
-        <?php endif; ?>
-
         <details class="connect-more" style="margin-top: 1rem;">
           <summary>I already have a token, paste it here</summary>
           <div class="body">
@@ -432,6 +409,23 @@ $justConnected = $tokensVm['message'] !== '';
 
       <button type="submit">Save</button>
     </form>
+
+    <?php if ($serverIp !== ''): ?>
+      <details style="margin-top: 1.5rem;">
+        <summary style="cursor: pointer; font-weight: 500;">Hardening — restrict tokens to this server&rsquo;s IP</summary>
+        <div class="ip-hint" style="margin-top: 0.75rem;">
+          <div class="ip-hint-label">This server&rsquo;s outbound IP:</div>
+          <div class="ip-hint-value"><code><?= $h($serverIp) ?></code></div>
+          <div class="muted" style="margin-top: 0.4rem;">
+            Cloudflare does not let us pre-fill this from the connect link.
+            To add it after the fact: Cloudflare dashboard &rarr; <em>My Profile</em>
+            &rarr; <em>API Tokens</em> &rarr; edit the token &rarr; <strong>Client
+            IP Address Filtering</strong> &rarr; <em>Is in</em> =
+            <code><?= $h($serverIp) ?></code>. Optional, but recommended.
+          </div>
+        </div>
+      </details>
+    <?php endif; ?>
 
     <h3 style="margin-top: 1.5rem;">Enrolled cPanel users</h3>
     <?php if ($adminVm['enrolled'] === []): ?>
