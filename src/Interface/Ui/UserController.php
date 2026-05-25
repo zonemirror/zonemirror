@@ -4,10 +4,16 @@ declare(strict_types=1);
 
 namespace ZoneMirror\Interface\Ui;
 
+use ZoneMirror\Domain\DnsEvent;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Domain\RecordType;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
 use ZoneMirror\Infrastructure\Logging\FileLogger;
 use ZoneMirror\Infrastructure\Logging\LogLevel;
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
 use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\DiffStorage;
 use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
 use ZoneMirror\Infrastructure\Storage\Paths;
@@ -44,13 +50,16 @@ use ZoneMirror\Infrastructure\Storage\ZoneIndex;
  *     zone_id: string,
  *     zone_name: string,
  *     source: string,
+ *     sync_state: string,
+ *     last_error: string,
  *     defaults_proxied: bool,
  *     token_set: bool,
  *     csrf: string,
  *     queue_depth: int,
  *     dead_letters: int,
  *     test_result: ?string,
- *     domains: list<DomainStatus>
+ *     domains: list<DomainStatus>,
+ *     diff: array<string, mixed>|null
  * }
  */
 final class UserController
@@ -124,6 +133,10 @@ final class UserController
                     [$saved, $errors, $message] = $this->connectDomain($user, $post, $allDomains);
                 } elseif ($action === 'disconnect') {
                     [$saved, $errors, $message] = $this->disconnect($user);
+                } elseif ($action === 'refresh_diff') {
+                    [$saved, $errors, $message] = $this->refreshDiff($user);
+                } elseif ($action === 'apply') {
+                    [$saved, $errors, $message] = $this->applySelected($user, $post);
                 } elseif ($action === 'test') {
                     $testResult = $this->testConnection(
                         (string) ($post['token'] ?? ''),
@@ -140,13 +153,15 @@ final class UserController
         $dead = 0;
         if ($cfg['enabled']) {
             try {
-                $queue = new \ZoneMirror\Infrastructure\Queue\SqliteQueue($user);
+                $queue = new SqliteQueue($user);
                 $depth = $queue->depth();
                 $dead = $queue->deadLetterCount();
             } catch (\Throwable) {
                 // Queue not yet initialized; show zeros.
             }
         }
+
+        $diff = $cfg['enabled'] ? (new DiffStorage())->load($user) : null;
 
         return [
             'user' => $user,
@@ -158,6 +173,8 @@ final class UserController
             'zone_id' => $cfg['zone_id'],
             'zone_name' => $cfg['zone_name'],
             'source' => $cfg['source'],
+            'sync_state' => $cfg['sync_state'],
+            'last_error' => $cfg['last_error'],
             'defaults_proxied' => $cfg['defaults']['proxied'],
             'token_set' => $cfg['token'] !== '',
             'csrf' => Csrf::token(),
@@ -165,6 +182,7 @@ final class UserController
             'dead_letters' => $dead,
             'test_result' => $testResult,
             'domains' => $this->buildDomainsStatus($allDomains, $cfg),
+            'diff' => $diff,
         ];
     }
 
@@ -283,6 +301,243 @@ final class UserController
     }
 
     /**
+     * Re-flag the user as pending_diff so the daemon recomputes on its
+     * next cycle. The previous diff.json stays on disk until the daemon
+     * overwrites it so the UI keeps something to render in the meantime;
+     * we just flip the sync_state.
+     *
+     * @return array{0: bool, 1: list<string>, 2: string}
+     */
+    private function refreshDiff(string $user): array
+    {
+        $storage = $this->storageFor($user);
+        $cfg = $storage->load($user);
+        if (!$cfg['enabled'] || $cfg['zone_id'] === '') {
+            return [false, ['No domain connected.'], ''];
+        }
+        $storage->save($user, [
+            'enabled' => $cfg['enabled'],
+            'zone_id' => $cfg['zone_id'],
+            'zone_name' => $cfg['zone_name'],
+            'defaults' => $cfg['defaults'],
+            'source' => $cfg['source'],
+            'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
+            'token' => $cfg['token'],
+        ]);
+
+        return [true, [], 'Refreshing diff with Cloudflare…'];
+    }
+
+    /**
+     * Apply user-selected diff rows. Two POST shapes are accepted:
+     *
+     * 1. Per-row selection — `push_keys[]` and `delete_keys[]` arrays of
+     *    diff entry keys. The user ticks individual rows in the table
+     *    and we enqueue one event per key.
+     * 2. Bulk by status — `apply_status` set to "different",
+     *    "cpanel_only", or "cloudflare_only" applies every row in that
+     *    category. "different" and "cpanel_only" produce Upserts;
+     *    "cloudflare_only" produces Deletes.
+     *
+     * The two shapes can be combined in one POST (e.g. apply_status =
+     * cpanel_only + a few extra push_keys); we de-duplicate by key. The
+     * sync_state stays in awaiting_review unless every non-identical
+     * row has been applied, in which case we flip it to idle.
+     *
+     * @param array<string, mixed> $post
+     * @return array{0: bool, 1: list<string>, 2: string}
+     */
+    private function applySelected(string $user, array $post): array
+    {
+        $storage = $this->storageFor($user);
+        $cfg = $storage->load($user);
+        if (!$cfg['enabled'] || $cfg['zone_id'] === '') {
+            return [false, ['No domain connected.'], ''];
+        }
+
+        $diff = (new DiffStorage())->load($user);
+        if ($diff === null) {
+            return [false, ['No diff available. Press Refresh to recompute.'], ''];
+        }
+
+        $byKey = [];
+        foreach (($diff['entries'] ?? []) as $e) {
+            if (is_array($e) && is_string($e['key'] ?? null)) {
+                $byKey[$e['key']] = $e;
+            }
+        }
+
+        $pushKeys = $this->normaliseKeyList($post['push_keys'] ?? []);
+        $deleteKeys = $this->normaliseKeyList($post['delete_keys'] ?? []);
+
+        // Bulk by status: union with per-row picks. We treat cpanel_only
+        // and different as Upserts, cloudflare_only as Deletes — matching
+        // the per-row defaults in the UI.
+        $bulkStatus = (string) ($post['apply_status'] ?? '');
+        if ($bulkStatus !== '') {
+            foreach ($byKey as $key => $e) {
+                $status = (string) ($e['status'] ?? '');
+                if ($bulkStatus === 'all') {
+                    if ($status === 'different' || $status === 'cpanel_only') {
+                        $pushKeys[] = $key;
+                    }
+                } elseif ($bulkStatus === $status) {
+                    if ($status === 'cloudflare_only') {
+                        $deleteKeys[] = $key;
+                    } else {
+                        $pushKeys[] = $key;
+                    }
+                }
+            }
+        }
+
+        $pushKeys = array_values(array_unique($pushKeys));
+        $deleteKeys = array_values(array_unique($deleteKeys));
+
+        $queue = new SqliteQueue($user);
+        $now = time();
+        $pushed = 0;
+        $deleted = 0;
+        $skipped = [];
+
+        foreach ($pushKeys as $key) {
+            $entry = $byKey[$key] ?? null;
+            if ($entry === null || !is_array($entry['local'] ?? null)) {
+                $skipped[] = $key;
+
+                continue;
+            }
+            $record = $this->hydrateRecordFromDiff($entry['local']);
+            if ($record === null) {
+                $skipped[] = $key;
+
+                continue;
+            }
+            $queue->enqueue(new DnsEvent(
+                domain: (string) ($diff['zone_name'] ?? ''),
+                action: EventAction::Upsert,
+                record: $record,
+                idempotencyKey: 'apply:' . $now . ':' . $key,
+                createdAt: $now,
+            ));
+            $pushed++;
+        }
+
+        foreach ($deleteKeys as $key) {
+            $entry = $byKey[$key] ?? null;
+            if ($entry === null || !is_array($entry['remote'] ?? null)) {
+                $skipped[] = $key;
+
+                continue;
+            }
+            $remoteId = (string) ($entry['remote']['id'] ?? '');
+            if ($remoteId === '') {
+                $skipped[] = $key;
+
+                continue;
+            }
+            // For deletes we only need enough of a DnsRecord for the
+            // logger; the actual lookup happens on the daemon side via
+            // target_cloudflare_id. Use a minimal placeholder.
+            $type = RecordType::tryFromString((string) ($entry['type'] ?? ''));
+            if ($type === null) {
+                $skipped[] = $key;
+
+                continue;
+            }
+            $placeholder = new DnsRecord(
+                type: $type,
+                name: (string) ($entry['name'] ?? ''),
+                content: isset($entry['remote']['content']) ? (string) $entry['remote']['content'] : null,
+                ttl: (int) ($entry['remote']['ttl'] ?? 300),
+                priority: isset($entry['remote']['priority']) ? (int) $entry['remote']['priority'] : null,
+                proxied: null,
+                data: is_array($entry['remote']['data'] ?? null) ? $entry['remote']['data'] : [],
+            );
+            $queue->enqueue(new DnsEvent(
+                domain: (string) ($diff['zone_name'] ?? ''),
+                action: EventAction::Delete,
+                record: $placeholder,
+                idempotencyKey: 'apply:' . $now . ':del:' . $remoteId,
+                createdAt: $now,
+                targetCloudflareId: $remoteId,
+            ));
+            $deleted++;
+        }
+
+        // We deliberately do NOT flip sync_state to idle here. The diff
+        // stays "awaiting_review" until the user explicitly refreshes;
+        // the queue depth + dead_letter count tell them how the apply is
+        // progressing, and Refresh shows what's left to do.
+        $this->logFor($user)->info('diff: applied', [
+            'user' => $user,
+            'pushed' => $pushed,
+            'deleted' => $deleted,
+            'skipped' => count($skipped),
+        ]);
+
+        $bits = [];
+        if ($pushed > 0) {
+            $bits[] = sprintf('%d push%s', $pushed, $pushed === 1 ? '' : 'es');
+        }
+        if ($deleted > 0) {
+            $bits[] = sprintf('%d delete%s', $deleted, $deleted === 1 ? '' : 's');
+        }
+        if ($bits === []) {
+            return [false, ['Nothing selected.'], ''];
+        }
+
+        return [
+            true,
+            [],
+            'Queued ' . implode(' and ', $bits) . '. Cloudflare will reflect changes within ~30s.',
+        ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function normaliseKeyList(mixed $raw): array
+    {
+        if (!is_array($raw)) {
+            return [];
+        }
+        $out = [];
+        foreach ($raw as $v) {
+            if (is_string($v) && $v !== '') {
+                $out[] = $v;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * Rebuild a DnsRecord from the `local` block of a diff entry. The
+     * shape was produced by DnsRecord::toCloudflarePayload(), so this
+     * is essentially the inverse of that method.
+     *
+     * @param array<string, mixed> $payload
+     */
+    private function hydrateRecordFromDiff(array $payload): ?DnsRecord
+    {
+        $type = RecordType::tryFromString(isset($payload['type']) ? (string) $payload['type'] : null);
+        if ($type === null) {
+            return null;
+        }
+
+        return new DnsRecord(
+            type: $type,
+            name: (string) ($payload['name'] ?? ''),
+            content: isset($payload['content']) ? (string) $payload['content'] : null,
+            ttl: (int) ($payload['ttl'] ?? 300),
+            priority: isset($payload['priority']) ? (int) $payload['priority'] : null,
+            proxied: array_key_exists('proxied', $payload) ? (bool) $payload['proxied'] : null,
+            data: is_array($payload['data'] ?? null) ? $payload['data'] : [],
+        );
+    }
+
+    /**
      * @return array{0: bool, 1: list<string>, 2: string}
      */
     private function disconnect(string $user): array
@@ -295,11 +550,17 @@ final class UserController
             'zone_name' => $existing['zone_name'],
             'defaults' => $existing['defaults'],
             'source' => $existing['source'],
+            'sync_state' => UserConfigStorage::STATE_IDLE,
             // Keep the user's own token on file if they had one, so they
             // can re-enable without re-pasting. For source=admin there
             // is nothing token-ish to keep.
             'token' => $existing['source'] === UserConfigStorage::SOURCE_USER ? $existing['token'] : '',
         ]);
+
+        // The diff is now stale and visually misleading — drop it. A
+        // reconnect will trigger pending_diff which recomputes from
+        // scratch.
+        (new DiffStorage())->remove($user);
 
         $this->enrolled->remove($user);
         $this->logFor($user)->info('disconnected', ['user' => $user]);

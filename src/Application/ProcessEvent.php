@@ -36,6 +36,7 @@ final class ProcessEvent
         EventAction $action,
         DnsRecord $record,
         ZoneSnapshot $snapshot,
+        ?string $targetCloudflareId = null,
     ): SyncResult {
         if ($zoneId === '') {
             $this->log->warning('skipping event: empty zone id', ['type' => $record->type->value]);
@@ -43,7 +44,15 @@ final class ProcessEvent
             return SyncResult::Skipped;
         }
 
-        $match = $snapshot->find($record);
+        // When the UI's diff-apply flow tells us exactly which Cloudflare
+        // record id to act on, use that — the snapshot's (type, name)
+        // match is ambiguous for multi-row owners (SRV, MX, CAA) and
+        // would otherwise either no-op or hit the wrong row.
+        if ($targetCloudflareId !== null && $targetCloudflareId !== '') {
+            $match = $snapshot->findById($targetCloudflareId);
+        } else {
+            $match = $snapshot->find($record);
+        }
 
         return match ($action) {
             EventAction::Upsert => $this->upsert($zoneId, $record, $match, $snapshot),
