@@ -370,6 +370,25 @@ final class UserController
         $pushKeys = $this->normaliseKeyList($post['push_keys'] ?? []);
         $deleteKeys = $this->normaliseKeyList($post['delete_keys'] ?? []);
 
+        // Per-record proxy override. The UI emits proxy_override[KEY]="1"|"0"
+        // when the user clicks the cloud toggle on a card. We force-include
+        // the key in pushKeys and, below, override the hydrated record's
+        // proxied flag before enqueueing. Empty values are ignored — that's
+        // the UI's signal for "user toggled twice, back to original".
+        /** @var array<string, bool> $proxyOverrides */
+        $proxyOverrides = [];
+        if (isset($post['proxy_override']) && is_array($post['proxy_override'])) {
+            foreach ($post['proxy_override'] as $k => $v) {
+                if (!is_string($k) || $k === '' || !is_string($v) || $v === '') {
+                    continue;
+                }
+                if ($v === '1' || $v === '0') {
+                    $proxyOverrides[$k] = $v === '1';
+                    $pushKeys[] = $k;
+                }
+            }
+        }
+
         // Bulk by status: union with per-row picks. We treat cpanel_only
         // and different as Upserts, cloudflare_only as Deletes — matching
         // the per-row defaults in the UI.
@@ -412,6 +431,21 @@ final class UserController
                 $skipped[] = $key;
 
                 continue;
+            }
+            // Apply the per-record proxy override on top of the hydrated
+            // record. This is what lets the user "Promote to proxied" (or
+            // back) on a row that was previously identical, without us
+            // having to invent a new event type.
+            if (array_key_exists($key, $proxyOverrides) && $record->type->supportsProxy()) {
+                $record = new DnsRecord(
+                    type: $record->type,
+                    name: $record->name,
+                    content: $record->content,
+                    ttl: $record->ttl,
+                    priority: $record->priority,
+                    proxied: $proxyOverrides[$key],
+                    data: $record->data,
+                );
             }
             $queue->enqueue(new DnsEvent(
                 domain: (string) ($diff['zone_name'] ?? ''),

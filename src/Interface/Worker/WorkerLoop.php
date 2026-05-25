@@ -123,14 +123,16 @@ final class WorkerLoop
                             'user' => $user,
                             'zone' => $userCfg['zone_name'],
                         ]);
+
                         continue;
                     }
-                    $plainToken = (string) ($adminTokens->plaintextFor($hit['admin_token_id']) ?? '');
+                    $plainToken = $adminTokens->plaintextFor($hit['admin_token_id']) ?? '';
                     if ($plainToken === '') {
                         $this->log->warning('worker: admin token undecryptable, skipping', [
                             'user' => $user,
                             'admin_token_id' => $hit['admin_token_id'],
                         ]);
+
                         continue;
                     }
                 }
@@ -231,6 +233,7 @@ final class WorkerLoop
     private function runDiff(string $user, array $cfg, string $plainToken, UserConfigStorage $storage): void
     {
         $this->writeSyncState($storage, $user, $cfg, UserConfigStorage::STATE_COMPUTING_DIFF);
+
         try {
             $diff = (new ComputeDiff())->compute(
                 zoneName: $cfg['zone_name'],

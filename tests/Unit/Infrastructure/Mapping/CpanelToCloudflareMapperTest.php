@@ -21,7 +21,7 @@ final class CpanelToCloudflareMapperTest extends TestCase
     {
         $rec = $this->mapper->map(
             ['type' => 'A', 'name' => 'www.example.com.', 'address' => '203.0.113.10', 'ttl' => 600],
-            ['proxied' => true],
+            ['proxied' => true, 'auto_ttl' => false],
         );
         self::assertNotNull($rec);
         self::assertSame(RecordType::A, $rec->type);
@@ -66,12 +66,13 @@ final class CpanelToCloudflareMapperTest extends TestCase
     {
         $rec = $this->mapper->map(
             ['type' => 'MX', 'name' => 'example.com.', 'exchange' => 'mail.example.com.', 'preference' => 5, 'ttl' => 3600],
-            ['proxied' => false],
+            ['proxied' => false, 'auto_ttl' => false],
         );
         self::assertNotNull($rec);
         self::assertSame(RecordType::MX, $rec->type);
         self::assertSame('mail.example.com', $rec->content);
         self::assertSame(5, $rec->priority);
+        self::assertSame(3600, $rec->ttl);
     }
 
     public function testMapsSrvIntoStructuredData(): void
@@ -127,9 +128,32 @@ final class CpanelToCloudflareMapperTest extends TestCase
     {
         $rec = $this->mapper->map(
             ['type' => 'A', 'name' => 'example.com.', 'address' => '203.0.113.1', 'ttl' => 10],
-            ['proxied' => false],
+            ['proxied' => false, 'auto_ttl' => false],
         );
         self::assertNotNull($rec);
         self::assertSame(60, $rec->ttl);
+    }
+
+    public function testAutoTtlByDefaultForcesCloudflareAuto(): void
+    {
+        // No `auto_ttl` key in defaults → the mapper's own default (true)
+        // kicks in. cPanel's 14400s ttl is dropped in favour of ttl=1,
+        // which is Cloudflare's "Auto" sentinel.
+        $rec = $this->mapper->map(
+            ['type' => 'A', 'name' => 'example.com.', 'address' => '203.0.113.1', 'ttl' => 14400],
+            ['proxied' => false],
+        );
+        self::assertNotNull($rec);
+        self::assertSame(1, $rec->ttl);
+    }
+
+    public function testAutoTtlExplicitlyOnOverridesRawTtl(): void
+    {
+        $rec = $this->mapper->map(
+            ['type' => 'MX', 'name' => 'example.com.', 'exchange' => 'mail.example.com.', 'preference' => 5, 'ttl' => 3600],
+            ['proxied' => false, 'auto_ttl' => true],
+        );
+        self::assertNotNull($rec);
+        self::assertSame(1, $rec->ttl);
     }
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ZoneMirror\Interface\Ui;
 
 use ZoneMirror\Application\IndexZones;
+use ZoneMirror\Domain\AdminToken;
 use ZoneMirror\Infrastructure\Logging\FileLogger;
 use ZoneMirror\Infrastructure\Logging\LogLevel;
 use ZoneMirror\Infrastructure\Storage\AdminTokenStorage;
@@ -53,6 +54,7 @@ final class AdminTokensController
             return [
                 'allowed' => false,
                 'tokens' => [],
+                'accounts_count_by_token' => [],
                 'errors' => ['Admin tokens can only be managed as root.'],
                 'message' => '',
                 'csrf' => Csrf::token(),
@@ -69,6 +71,7 @@ final class AdminTokensController
                 $errors[] = 'Invalid CSRF token. Please reload the page and try again.';
             } else {
                 $action = (string) ($post['action'] ?? '');
+
                 try {
                     [$message, $maybeError] = $this->dispatch($storage, $action, $post);
                     if ($maybeError !== null) {
@@ -153,6 +156,7 @@ final class AdminTokensController
             if ($existing === null) {
                 return ['', 'Token not found.'];
             }
+
             try {
                 $this->resolveIndexer()->refreshOne($id);
             } catch (\Throwable $e) {
@@ -181,6 +185,7 @@ final class AdminTokensController
                 return ['', 'Token not found.'];
             }
             $storage->remove($id);
+
             // Drop the token's zones from the index right away so cPanel
             // users stop seeing this token as a possible source for their
             // domains. Index lives in the daemon's territory but we have

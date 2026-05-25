@@ -22,7 +22,7 @@ final class CpanelToCloudflareMapper
 {
     /**
      * @param array<string, mixed> $raw   cPanel hook payload's record block.
-     * @param array{proxied: bool, ttl?: int} $defaults
+     * @param array{proxied: bool, ttl?: int, auto_ttl?: bool} $defaults
      */
     public function map(array $raw, array $defaults): ?DnsRecord
     {
@@ -36,7 +36,19 @@ final class CpanelToCloudflareMapper
             return null;
         }
 
-        $ttl = max(60, (int) ($raw['ttl'] ?? $defaults['ttl'] ?? 300));
+        // "Auto TTL" is what Cloudflare's dashboard recommends and is what
+        // every proxied record ends up at anyway. When the WHM admin opts
+        // in (which is the new default), force ttl=1 regardless of what
+        // the cPanel zone file says — the local TTL is mostly cruft from
+        // 14400-second defaults that nobody curated and that propagates
+        // noise into the diff. The admin can still flip back to manual
+        // by unticking the box in WHM → Advanced settings.
+        $autoTtl = (bool) ($defaults['auto_ttl'] ?? true);
+        if ($autoTtl) {
+            $ttl = 1;
+        } else {
+            $ttl = max(60, (int) ($raw['ttl'] ?? $defaults['ttl'] ?? 300));
+        }
 
         return match ($type) {
             RecordType::A, RecordType::AAAA => new DnsRecord(

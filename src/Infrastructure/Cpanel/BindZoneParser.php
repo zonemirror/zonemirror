@@ -49,7 +49,11 @@ final class BindZoneParser
         $previousName = $origin;
         $records = [];
 
-        foreach (preg_split('/\r\n|\r|\n/', $contents) ?: [] as $rawLine) {
+        $rawLines = preg_split('/\r\n|\r|\n/', $contents);
+        if ($rawLines === false) {
+            return [];
+        }
+        foreach ($rawLines as $rawLine) {
             $line = rtrim($this->stripComment($rawLine));
             if (trim($line) === '') {
                 continue;
@@ -101,6 +105,7 @@ final class BindZoneParser
 
                     continue;
                 }
+
                 break;
             }
             if ($i >= count($tokens)) {
