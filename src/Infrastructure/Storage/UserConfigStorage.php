@@ -17,8 +17,9 @@ use RuntimeException;
  *     "zone_name": "example.com",
  *     "defaults": { "proxied": false },
  *     "source": "admin" | "user",
- *     "initial_seed_state": "none|pending|in_progress|done|failed",
- *     "token_encrypted": "...base64..."          // only when source = user
+ *     "sync_state": "idle|pending_diff|computing_diff|awaiting_review|failed",
+ *     "last_error": "..."                         // present only when sync_state=failed
+ *     "token_encrypted": "...base64..."           // only when source = user
  *   }
  *
  * The `source` field distinguishes the two onboarding paths:
@@ -28,12 +29,22 @@ use RuntimeException;
  *     No per-user token is stored; the daemon resolves which admin
  *     token to use via the zone index at sync time.
  *
- * The `initial_seed_state` field tracks the one-shot backfill from the
- * cPanel-local zone file. When a user connects a domain we set this to
- * `pending`; the daemon picks it up, reads /var/named/<zone>.db, enqueues
- * an Upsert per syncable record, and moves it to `done` (or `failed`).
- * On subsequent connects of the same domain it is set back to `pending`
- * so the user gets a fresh reconcile rather than relying on stale state.
+ * The `sync_state` field drives the diff-review wizard:
+ *   - idle: nothing pending. Either freshly disconnected or the diff
+ *     has already been applied. Hooks still fire for future edits.
+ *   - pending_diff: the user just connected or asked to refresh; the
+ *     daemon needs to recompute the diff.
+ *   - computing_diff: daemon is mid-computation. Visible-state guard
+ *     against an interrupted cycle.
+ *   - awaiting_review: diff.json is on disk; the cPanel UI shows the
+ *     table and the user picks per-row what to apply.
+ *   - failed: the most recent diff attempt threw. `last_error` carries
+ *     the message for the UI to display.
+ *
+ * On-disk back-compat: configs written by M3.b use `initial_seed_state`
+ * with values none/pending/in_progress/done/failed. They are mapped
+ * one-to-one on load (none→idle, pending→pending_diff, etc.) so an
+ * upgraded install does not lose connections.
  *
  * Configs written before the source field existed default to "user"
  * on load (they came from the v0.1 paste-token flow). The plaintext
@@ -49,22 +60,31 @@ final class UserConfigStorage
     public const SOURCE_USER = 'user';
     public const SOURCE_ADMIN = 'admin';
 
-    public const SEED_NONE = 'none';
-    public const SEED_PENDING = 'pending';
-    public const SEED_IN_PROGRESS = 'in_progress';
-    public const SEED_DONE = 'done';
-    public const SEED_FAILED = 'failed';
+    public const STATE_IDLE = 'idle';
+    public const STATE_PENDING_DIFF = 'pending_diff';
+    public const STATE_COMPUTING_DIFF = 'computing_diff';
+    public const STATE_AWAITING_REVIEW = 'awaiting_review';
+    public const STATE_FAILED = 'failed';
 
-    private const SEED_STATES = [
-        self::SEED_NONE,
-        self::SEED_PENDING,
-        self::SEED_IN_PROGRESS,
-        self::SEED_DONE,
-        self::SEED_FAILED,
+    private const STATES = [
+        self::STATE_IDLE,
+        self::STATE_PENDING_DIFF,
+        self::STATE_COMPUTING_DIFF,
+        self::STATE_AWAITING_REVIEW,
+        self::STATE_FAILED,
+    ];
+
+    /** @var array<string, string> */
+    private const LEGACY_STATE_MAP = [
+        'none' => self::STATE_IDLE,
+        'pending' => self::STATE_PENDING_DIFF,
+        'in_progress' => self::STATE_COMPUTING_DIFF,
+        'done' => self::STATE_IDLE,
+        'failed' => self::STATE_FAILED,
     ];
 
     /**
-     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, initial_seed_state: string}
+     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, sync_state: string, last_error: string}
      */
     public function load(string $user): array
     {
@@ -97,8 +117,13 @@ final class UserConfigStorage
             ? $rawSource
             : self::SOURCE_USER; // v0.1 configs predate the field
 
-        $rawSeed = is_string($json['initial_seed_state'] ?? null) ? $json['initial_seed_state'] : '';
-        $seed = in_array($rawSeed, self::SEED_STATES, true) ? $rawSeed : self::SEED_NONE;
+        $state = self::STATE_IDLE;
+        if (is_string($json['sync_state'] ?? null) && in_array($json['sync_state'], self::STATES, true)) {
+            $state = $json['sync_state'];
+        } elseif (is_string($json['initial_seed_state'] ?? null)) {
+            // M3.b → M4 migration: re-interpret the legacy field.
+            $state = self::LEGACY_STATE_MAP[$json['initial_seed_state']] ?? self::STATE_IDLE;
+        }
 
         return [
             'enabled' => (bool) ($json['enabled'] ?? false),
@@ -109,12 +134,13 @@ final class UserConfigStorage
             ],
             'token' => $token,
             'source' => $source,
-            'initial_seed_state' => $seed,
+            'sync_state' => $state,
+            'last_error' => is_string($json['last_error'] ?? null) ? $json['last_error'] : '',
         ];
     }
 
     /**
-     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token?: string, source?: string, initial_seed_state?: string} $data
+     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token?: string, source?: string, sync_state?: string, last_error?: string} $data
      */
     public function save(string $user, array $data): void
     {
@@ -128,8 +154,8 @@ final class UserConfigStorage
             ? $rawSource
             : self::SOURCE_USER;
 
-        $rawSeed = isset($data['initial_seed_state']) ? (string) $data['initial_seed_state'] : self::SEED_NONE;
-        $seed = in_array($rawSeed, self::SEED_STATES, true) ? $rawSeed : self::SEED_NONE;
+        $rawState = isset($data['sync_state']) ? (string) $data['sync_state'] : self::STATE_IDLE;
+        $state = in_array($rawState, self::STATES, true) ? $rawState : self::STATE_IDLE;
 
         $payload = [
             'version' => 1,
@@ -140,8 +166,11 @@ final class UserConfigStorage
                 'proxied' => (bool) ($data['defaults']['proxied'] ?? false),
             ],
             'source' => $source,
-            'initial_seed_state' => $seed,
+            'sync_state' => $state,
         ];
+        if ($state === self::STATE_FAILED) {
+            $payload['last_error'] = isset($data['last_error']) ? (string) $data['last_error'] : '';
+        }
 
         // Token ciphertext is only relevant for the user-pasted path. For
         // admin-covered domains the daemon resolves the token via the zone
@@ -177,7 +206,7 @@ final class UserConfigStorage
     }
 
     /**
-     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, initial_seed_state: string}
+     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, sync_state: string, last_error: string}
      */
     private function empty(): array
     {
@@ -188,7 +217,8 @@ final class UserConfigStorage
             'defaults' => ['proxied' => false],
             'token' => '',
             'source' => self::SOURCE_USER,
-            'initial_seed_state' => self::SEED_NONE,
+            'sync_state' => self::STATE_IDLE,
+            'last_error' => '',
         ];
     }
 }

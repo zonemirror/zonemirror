@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace ZoneMirror\Interface\Worker;
 
+use ZoneMirror\Application\ComputeDiff;
 use ZoneMirror\Application\IndexZones;
-use ZoneMirror\Application\InitialSync;
 use ZoneMirror\Application\ProcessEvent;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareException;
@@ -14,6 +14,7 @@ use ZoneMirror\Infrastructure\Logging\FileLogger;
 use ZoneMirror\Infrastructure\Queue\SqliteQueue;
 use ZoneMirror\Infrastructure\Storage\AdminTokenStorage;
 use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\DiffStorage;
 use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
 use ZoneMirror\Infrastructure\Storage\Paths;
@@ -108,16 +109,6 @@ final class WorkerLoop
                     continue;
                 }
 
-                // Initial seed: if this user's connect happened recently and
-                // we haven't backfilled the existing /var/named/<zone>.db,
-                // enqueue Upsert events for every syncable record now. Runs
-                // once per pending state transition; the seed result is
-                // persisted so a daemon restart doesn't replay.
-                if ($userCfg['initial_seed_state'] === UserConfigStorage::SEED_PENDING) {
-                    $this->runInitialSeed($user, $userCfg, $userStorage);
-                    $didWork = true;
-                }
-
                 // Resolve the Cloudflare token to use for this user/domain:
                 //   - source=user: the user pasted their own token (v0.1 flow).
                 //   - source=admin: no per-user token; the daemon looks the
@@ -145,6 +136,18 @@ final class WorkerLoop
                 }
                 if ($plainToken === '') {
                     continue;
+                }
+
+                // Diff review: if the user just connected or asked for a
+                // refresh, recompute the diff against Cloudflare before we
+                // touch the queue. The UI sits on `awaiting_review` until
+                // the user explicitly applies rows; we never auto-mutate.
+                if ($userCfg['sync_state'] === UserConfigStorage::STATE_PENDING_DIFF) {
+                    $this->runDiff($user, $userCfg, $plainToken, $userStorage);
+                    $didWork = true;
+                    // Reload to pick up the new state for the rest of this
+                    // iteration (queue processing below still runs).
+                    $userCfg = $userStorage->load($user);
                 }
 
                 $queue = $this->queueFor($user);
@@ -212,35 +215,39 @@ final class WorkerLoop
     }
 
     /**
-     * Drive one InitialSync pass and persist the resulting state. Failures
-     * mark the config `failed` rather than `pending` so we don't burn cycles
-     * retrying a broken zone file every iteration; the operator can re-Connect
-     * to retry.
+     * Compute one diff pass and persist the result. Failures mark the
+     * config `failed` (with `last_error`) rather than leaving it `pending`,
+     * so we don't burn API quota retrying a broken setup every cycle; the
+     * user can press Refresh to retry from the cPanel UI.
      *
-     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, initial_seed_state: string} $cfg
+     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, sync_state: string, last_error: string} $cfg
      */
-    private function runInitialSeed(string $user, array $cfg, UserConfigStorage $storage): void
+    private function runDiff(string $user, array $cfg, string $plainToken, UserConfigStorage $storage): void
     {
-        // Mark in_progress before doing work so a crash mid-seed leaves
-        // a visible state instead of looping pending forever.
-        $this->writeSeedState($storage, $user, $cfg, UserConfigStorage::SEED_IN_PROGRESS);
+        $this->writeSyncState($storage, $user, $cfg, UserConfigStorage::STATE_COMPUTING_DIFF);
         try {
-            $count = (new InitialSync())->seed(
-                user: $user,
+            $diff = (new ComputeDiff())->compute(
                 zoneName: $cfg['zone_name'],
-                defaultProxied: $cfg['defaults']['proxied'],
+                zoneId: $cfg['zone_id'],
+                cloudflareToken: $plainToken,
                 log: $this->log,
-                queue: $this->queueFor($user),
             );
-            $this->writeSeedState($storage, $user, $cfg, UserConfigStorage::SEED_DONE);
-            $this->log->info('initial seed complete', [
+            (new DiffStorage())->save($user, $diff);
+            $this->writeSyncState($storage, $user, $cfg, UserConfigStorage::STATE_AWAITING_REVIEW);
+            $this->log->info('diff: ready for review', [
                 'user' => $user,
                 'zone' => $cfg['zone_name'],
-                'enqueued' => $count,
+                'summary' => $diff->summary(),
             ]);
         } catch (\Throwable $e) {
-            $this->writeSeedState($storage, $user, $cfg, UserConfigStorage::SEED_FAILED);
-            $this->log->error('initial seed failed', [
+            $this->writeSyncState(
+                $storage,
+                $user,
+                $cfg,
+                UserConfigStorage::STATE_FAILED,
+                $e->getMessage(),
+            );
+            $this->log->error('diff: failed', [
                 'user' => $user,
                 'zone' => $cfg['zone_name'],
                 'error' => $e->getMessage(),
@@ -249,17 +256,23 @@ final class WorkerLoop
     }
 
     /**
-     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, initial_seed_state: string} $cfg
+     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, sync_state: string, last_error: string} $cfg
      */
-    private function writeSeedState(UserConfigStorage $storage, string $user, array $cfg, string $newState): void
-    {
+    private function writeSyncState(
+        UserConfigStorage $storage,
+        string $user,
+        array $cfg,
+        string $newState,
+        string $errorMessage = '',
+    ): void {
         $storage->save($user, [
             'enabled' => $cfg['enabled'],
             'zone_id' => $cfg['zone_id'],
             'zone_name' => $cfg['zone_name'],
             'defaults' => $cfg['defaults'],
             'source' => $cfg['source'],
-            'initial_seed_state' => $newState,
+            'sync_state' => $newState,
+            'last_error' => $errorMessage,
             // Preserve the user-pasted token if we have one. The save() method
             // re-loads the existing ciphertext when no plaintext is supplied
             // for SOURCE_USER, but being explicit costs nothing.
