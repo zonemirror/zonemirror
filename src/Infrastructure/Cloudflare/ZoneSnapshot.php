@@ -39,6 +39,27 @@ final class ZoneSnapshot
     }
 
     /**
+     * Direct lookup by Cloudflare record id. Used by the diff-apply path
+     * where the UI knows exactly which record to act on; the (type, name)
+     * lookup of {@see find()} can be ambiguous for multi-row owners.
+     *
+     * @return Record|null
+     */
+    public function findById(string $id): ?array
+    {
+        if ($id === '') {
+            return null;
+        }
+        foreach ($this->records as $r) {
+            if ((string) ($r['id'] ?? '') === $id) {
+                return $r;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @param Record $created
      */
     public function applyCreate(array $created): void

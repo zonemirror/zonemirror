@@ -34,6 +34,15 @@ final class SqliteQueue
     public function enqueue(DnsEvent $event): void
     {
         $pdo = $this->pdo();
+        // The target_cloudflare_id is shoved into the same JSON blob as
+        // the record payload (under the reserved `_cf_id` key) to avoid
+        // a schema migration on an existing 0600 SQLite that the cPanel
+        // user owns. Daemon and queue both stay backwards-compatible
+        // with rows that don't carry the key.
+        $payload = $event->record->toCloudflarePayload();
+        if ($event->targetCloudflareId !== null) {
+            $payload['_cf_id'] = $event->targetCloudflareId;
+        }
         $stmt = $pdo->prepare(
             'INSERT OR IGNORE INTO events
              (idempotency_key, domain, action, record_json, attempts, next_run_at, created_at)
@@ -43,7 +52,7 @@ final class SqliteQueue
             $event->idempotencyKey,
             $event->domain,
             $event->action->value,
-            json_encode($event->record->toCloudflarePayload(), JSON_UNESCAPED_SLASHES),
+            json_encode($payload, JSON_UNESCAPED_SLASHES),
             time(),
             $event->createdAt,
         ]);
@@ -53,7 +62,7 @@ final class SqliteQueue
      * Atomically claim the next ready event. Returns null when the queue is
      * idle. Caller is responsible for calling ack() or fail() afterwards.
      *
-     * @return array{id: int, domain: string, action: EventAction, record: DnsRecord, attempts: int, idempotency_key: string}|null
+     * @return array{id: int, domain: string, action: EventAction, record: DnsRecord, attempts: int, idempotency_key: string, target_cloudflare_id: ?string}|null
      */
     public function claim(int $visibilityTimeoutSeconds = 120): ?array
     {
@@ -86,6 +95,12 @@ final class SqliteQueue
             /** @var array<string, mixed> $payload */
             $payload = is_array($decoded) ? $decoded : [];
 
+            $targetId = null;
+            if (isset($payload['_cf_id']) && is_string($payload['_cf_id'])) {
+                $targetId = $payload['_cf_id'];
+                unset($payload['_cf_id']);
+            }
+
             return [
                 'id' => (int) $row['id'],
                 'domain' => (string) $row['domain'],
@@ -93,6 +108,7 @@ final class SqliteQueue
                 'record' => $this->hydrateRecord($payload),
                 'attempts' => (int) $row['attempts'],
                 'idempotency_key' => (string) $row['idempotency_key'],
+                'target_cloudflare_id' => $targetId,
             ];
         } catch (\Throwable $e) {
             if ($pdo->inTransaction()) {

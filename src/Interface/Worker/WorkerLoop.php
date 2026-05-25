@@ -170,7 +170,13 @@ final class WorkerLoop
                     $didWork = true;
 
                     try {
-                        $processor->handle($userCfg['zone_id'], $claim['action'], $claim['record'], $snapshot);
+                        $processor->handle(
+                            $userCfg['zone_id'],
+                            $claim['action'],
+                            $claim['record'],
+                            $snapshot,
+                            $claim['target_cloudflare_id'],
+                        );
                         $queue->ack($claim['id']);
                     } catch (CloudflareException $e) {
                         $this->log->warning('cloudflare error', [
