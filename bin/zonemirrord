@@ -9,6 +9,12 @@ declare(strict_types=1);
  * configuration lives under /var/cpanel/zonemirror/.
  */
 
+// PCRE JIT requires PROT_EXEC mmap, which the systemd unit blocks via
+// MemoryDenyWriteExecute=yes. Disable JIT here so the engine never tries
+// (interpreted PCRE is plenty fast for our log redaction volume, and it
+// keeps the journal clean of "Allocation of JIT memory failed" warnings).
+ini_set('pcre.jit', '0');
+
 use ZoneMirror\Infrastructure\Logging\FileLogger;
 use ZoneMirror\Infrastructure\Logging\LogLevel;
 use ZoneMirror\Infrastructure\Storage\Paths;
