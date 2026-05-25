@@ -75,7 +75,8 @@ $statusBadge = static function (string $status): string {
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #fafafa; }
     .card { max-width: 920px; margin: 1.5rem auto; padding: 1rem 1.25rem; background: #fff; border: 1px solid #ddd; border-radius: 6px; }
-    .card h2 { margin-top: 0; }
+    .card h2 { margin-top: 0; display: flex; align-items: center; gap: 0.75rem; }
+    .card h2 img.brand { height: 44px; width: auto; }
     .err { color: #b00; }
     .ok { color: #060; }
     .info { color: #336; }
@@ -98,13 +99,14 @@ $statusBadge = static function (string $status): string {
 </head>
 <body>
 <div class="card">
-  <h2>ZoneMirror — Administration
+  <h2>
+    <img class="brand" src="../../addon_plugins/zonemirror-light.png" alt="">
+    <span>ZoneMirror</span>
     <span class="pill" title="Installed plugin version">v<?= $h($adminVm['installed_version']) ?></span>
   </h2>
   <p class="muted">
-    The plugin syncs cPanel Zone Editor changes to Cloudflare in real time.
-    Configure Cloudflare API tokens here once and your cPanel users can connect
-    their domains with a single click — no token paste required from them.
+    Configure Cloudflare API tokens once. Your cPanel users connect their
+    domains with a single click — no token paste required from them.
   </p>
 </div>
 
@@ -113,8 +115,7 @@ $statusBadge = static function (string $status): string {
   <h2>Cloudflare API tokens</h2>
   <p class="muted">
     Tokens entered here cover Cloudflare zones on behalf of every cPanel user
-    whose domain falls inside them. Stored encrypted at
-    <code>/var/cpanel/zonemirror/admin-tokens.json</code> with a root-only AEAD key.
+    whose domain falls inside them.
   </p>
 
   <?php if (!$tokensVm['allowed']): ?>
@@ -194,9 +195,7 @@ $statusBadge = static function (string $status): string {
             <input type="password" name="token" placeholder="cf-XXXX..." required autocomplete="new-password">
           </label>
           <p class="muted">
-            Required scopes: <code>Zone:DNS:Edit</code> and <code>Zone:Zone:Read</code>.
-            The plugin will probe the token against <code>/user/tokens/verify</code>
-            and list the zones it can see.
+            Required scopes: <strong>Zone:DNS:Edit</strong> and <strong>Zone:Zone:Read</strong>.
           </p>
         </div>
       </div>
@@ -262,11 +261,6 @@ $statusBadge = static function (string $status): string {
       <?php endforeach; ?>
     </ul>
   <?php endif; ?>
-
-  <p class="muted">
-    Updates: <code>sudo zonemirror check</code> compares with the latest GitHub release.
-    Auto-update: <code>sudo zonemirror auto-update on</code> enables the daily systemd timer.
-  </p>
 </div>
 
 </body>
