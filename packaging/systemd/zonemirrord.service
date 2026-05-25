@@ -11,12 +11,18 @@ ExecStart=/usr/local/cpanel/3rdparty/zonemirror/bin/zonemirrord
 Restart=on-failure
 RestartSec=5s
 
-# Hardening
+# Hardening. ProtectHome must be `false` here: the daemon reads and writes
+# every enrolled user's queue at ~/.zonemirror/queue.sqlite, and SQLite WAL
+# creates `-wal` and `-shm` siblings on first open. With ProtectHome=read-only
+# the underlying bind-mount makes those creates fail with SQLITE_CANTOPEN
+# even when /home is listed under ReadWritePaths — WAL atomicity across the
+# namespace boundary just doesn't survive. The daemon runs as root anyway,
+# so sandboxing it away from /home only stops it from doing its job.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=read-only
-ReadWritePaths=/var/cpanel/zonemirror /var/log /home /root
+ProtectHome=false
+ReadWritePaths=/var/cpanel/zonemirror /var/log /root
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
