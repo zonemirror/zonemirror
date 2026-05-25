@@ -66,6 +66,13 @@ stage_files() {
     "$src_root/" "$PREFIX/"
   ln -sfn "$PREFIX/resources/cpanel/index.live.php" "$LIVEAPI_DIR/index.live.php"
   ln -sfn "$PREFIX/resources/whm/index.live.php" "$WHM_DIR/index.live.php"
+  # The WHM entry point is a Perl wrapper that prints the WHM chrome
+  # (defheader/deffooter) around an iframe pointing back at the PHP
+  # script above. PHP cannot call Whostmgr::HTMLInterface itself, so
+  # without this wrapper the admin page renders without sidebar or
+  # banner. The AppConfig manifest points at index.cgi as the primary
+  # entryurl; index.live.php is kept as url2 for the iframe target.
+  ln -sfn "$PREFIX/resources/whm/index.cgi" "$WHM_DIR/index.cgi"
   # Make sure the Jupiter app-icons and WHM addon-plugins dirs exist
   # (they are owned by cPanel and almost always present, but skipping the
   # check here would leave half-installed servers).
@@ -192,7 +199,7 @@ fix_permissions() {
   chown -R root:root "$PREFIX" "$SYSTEM_DIR"
   find "$PREFIX" -type d -exec chmod 0755 {} \;
   find "$PREFIX" -type f -exec chmod 0644 {} \;
-  chmod 0755 "$PREFIX"/bin/* "$PREFIX"/packaging/*.sh
+  chmod 0755 "$PREFIX"/bin/* "$PREFIX"/packaging/*.sh "$PREFIX"/resources/whm/index.cgi
   # See stage_files() for why $SYSTEM_DIR is 0755 and logs/ is 0700.
   chmod 0755 "$SYSTEM_DIR"
   chmod 0700 "$SYSTEM_DIR/logs"
