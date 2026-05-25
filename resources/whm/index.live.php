@@ -83,6 +83,25 @@ $cfDeepLink = 'https://dash.cloudflare.com/profile/api-tokens?'
         'name' => 'ZoneMirror — DNS sync (cPanel)',
     ]);
 
+// The server's main outbound IP — we recommend the admin restricts
+// each Cloudflare token to it via "Client IP Address Filtering" in
+// the token form. cPanel writes the main IP to /var/cpanel/mainip;
+// fall back to /etc/wwwacct.conf and finally to hostname -I.
+$serverIp = '';
+foreach (['/var/cpanel/mainip'] as $p) {
+    $raw = @file_get_contents($p);
+    if (is_string($raw) && preg_match('/(\d{1,3}\.){3}\d{1,3}/', trim($raw), $m) === 1) {
+        $serverIp = $m[0];
+        break;
+    }
+}
+if ($serverIp === '') {
+    $conf = @file_get_contents('/etc/wwwacct.conf');
+    if (is_string($conf) && preg_match('/^ADDR\s+((?:\d{1,3}\.){3}\d{1,3})/m', $conf, $m) === 1) {
+        $serverIp = $m[1];
+    }
+}
+
 $hasTokens = $tokensVm['allowed'] && $tokensVm['tokens'] !== [];
 $justConnected = $tokensVm['message'] !== '';
 ?>
@@ -191,6 +210,20 @@ $justConnected = $tokensVm['message'] !== '';
     details.advanced { margin-top: 1rem; }
     details.advanced > summary { cursor: pointer; color: #555; padding: 0.5rem 0; }
 
+    /* IP-restriction hint shown in the "Connect Cloudflare" flow */
+    .ip-hint {
+      max-width: 560px; margin: 1.25rem auto 0;
+      padding: 0.85rem 1rem;
+      background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 6px;
+      text-align: left;
+    }
+    .ip-hint-label { color: #444; font-size: 0.92em; margin-bottom: 0.3rem; }
+    .ip-hint-value { font-size: 1.15em; font-weight: 600; letter-spacing: 0.5px; }
+    .ip-hint-value code {
+      background: #fff; border: 1px solid #d0d7de; padding: 2px 8px;
+      border-radius: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef; color: #336; font-size: 0.85em; }
     .row { display: flex; gap: 1rem; align-items: end; }
     .row > div { flex: 1; }
@@ -234,6 +267,20 @@ $justConnected = $tokensVm['message'] !== '';
     <p class="muted" style="margin-top: 1rem;">
       We&rsquo;ll open Cloudflare with the right permissions already selected.
     </p>
+
+    <?php if ($serverIp !== ''): ?>
+      <div class="ip-hint">
+        <div class="ip-hint-label">For maximum security, lock this token to this server&rsquo;s IP:</div>
+        <div class="ip-hint-value">
+          <code id="zm-server-ip"><?= $h($serverIp) ?></code>
+        </div>
+        <div class="muted" style="margin-top: 0.35rem;">
+          In Cloudflare&rsquo;s token form, under <strong>Client IP Address Filtering</strong>,
+          set <em>Operator</em> = <strong>Is in</strong> and <em>Value</em> = <code><?= $h($serverIp) ?></code>.
+          Optional, but recommended.
+        </div>
+      </div>
+    <?php endif; ?>
 
     <details class="connect-more" style="max-width: 560px; margin: 1.5rem auto 0; text-align: left;">
       <summary>I already created a token in Cloudflare</summary>
@@ -305,11 +352,23 @@ $justConnected = $tokensVm['message'] !== '';
       <div class="body">
         <p class="muted">
           Add a second token if you manage multiple Cloudflare accounts
-          (for example, one per reseller brand).
+          (for example, one per reseller brand) and the existing tokens
+          don&rsquo;t cover all of them.
         </p>
         <a class="btn btn-cf-icon" href="<?= $h($cfDeepLink) ?>" target="_blank" rel="noopener">
           Open Cloudflare
         </a>
+
+        <?php if ($serverIp !== ''): ?>
+          <div class="ip-hint" style="margin: 1rem 0 0;">
+            <div class="ip-hint-label">Recommended IP restriction:</div>
+            <div class="ip-hint-value"><code><?= $h($serverIp) ?></code></div>
+            <div class="muted" style="margin-top: 0.3rem;">
+              Cloudflare token form &rarr; <strong>Client IP Address Filtering</strong>
+              &rarr; <em>Is in</em> = <code><?= $h($serverIp) ?></code>.
+            </div>
+          </div>
+        <?php endif; ?>
 
         <details class="connect-more" style="margin-top: 1rem;">
           <summary>I already have a token, paste it here</summary>
