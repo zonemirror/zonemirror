@@ -15,6 +15,7 @@ UPDATER_TIMER_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.timer"
 LIVEAPI_DIR="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
 WHM_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/${PLUGIN_ID}"
 ICON_TARGET_DIR="/usr/local/cpanel/base/unprotected/${PLUGIN_ID}"
+DYNAMICUI_DIR="/usr/local/cpanel/base/frontend/jupiter/dynamicui"
 CLI_SYMLINK="/usr/local/bin/zonemirror"
 
 require_root() {
@@ -60,6 +61,20 @@ stage_files() {
   ln -sfn "$PREFIX/resources/whm/index.live.php" "$WHM_DIR/index.live.php"
   if [[ -f "$src_root/resources/assets/icon.png" ]]; then
     install -m 0644 "$src_root/resources/assets/icon.png" "$ICON_TARGET_DIR/icon.png"
+    # Jupiter looks up the per-plugin icon at $LIVEAPI_DIR/icon.png when the
+    # dynamicui conf has imgtype=icon. $ICON_TARGET_DIR (base/unprotected) is
+    # only used by some templated paths; ship both for portability.
+    install -m 0644 "$src_root/resources/assets/icon.png" "$LIVEAPI_DIR/icon.png"
+  fi
+  # Drop the dynamicui conf so Jupiter actually renders the plugin tile in
+  # the sidebar. register_cpanelplugin installs the manifest and the feature
+  # but NOT this file, so without it the plugin is invisible in the UI even
+  # though hooks, daemon, and feature manager are all wired up correctly.
+  if [[ -d "$DYNAMICUI_DIR" ]]; then
+    cat >"$DYNAMICUI_DIR/dynamicui_${PLUGIN_ID}.conf" <<EOF
+description=>\$LANG{'${PLUGIN_NAME}'},feature=>${PLUGIN_ID},file=>${PLUGIN_ID},group=>domains,height=>48,imgtype=>icon,itemdesc=>\$LANG{'${PLUGIN_NAME}'},itemorder=>50,searchtext=>${PLUGIN_ID} cloudflare dns sync zone editor,subtype=>img,type=>image,url=>${PLUGIN_ID}/index.live.php,width=>48
+EOF
+    chmod 0644 "$DYNAMICUI_DIR/dynamicui_${PLUGIN_ID}.conf"
   fi
 }
 
