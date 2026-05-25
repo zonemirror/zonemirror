@@ -10,13 +10,15 @@ declare(strict_types=1);
 
 use ZoneMirror\Interface\Ui\UserController;
 
-// cPanel LIVEAPI handshake. cpsrvd writes a session token to STDIN and
-// expects "<length>\n<token>\n" on STDOUT before any other output. Without
-// it the child cannot establish the LIVEAPI session, $_ENV['REMOTE_USER']
-// stays empty, and the page renders "not enabled for your account".
+// cPanel LIVEAPI handshake. The CPANEL wrapper reads the session token from
+// STDIN and writes the acknowledgement, populating $_ENV['REMOTE_USER'] and
+// the rest of the LIVEAPI environment. Without this (or an equivalent raw
+// handshake) cpsrvd dies with "Child failed to make LIVEAPI connection to
+// cPanel". The wrapper handles SAPI differences (STDIN is not defined as a
+// constant under cpsrvd's PHP); a raw fgets(STDIN) crashes there.
 // https://api.docs.cpanel.net/guides/liveapi/getting-started/
-$liveapi_token = trim((string) fgets(STDIN));
-print strlen($liveapi_token) . "\n" . $liveapi_token . "\n";
+include '/usr/local/cpanel/php/cpanel.php';
+$cpanel = new CPANEL();
 
 $autoload = '/usr/local/cpanel/3rdparty/zonemirror/vendor/autoload.php';
 if (!is_file($autoload)) {
@@ -134,3 +136,4 @@ $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBS
 </div>
 </body>
 </html>
+<?php $cpanel->end(); ?>
