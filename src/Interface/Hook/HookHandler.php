@@ -39,7 +39,7 @@ final class HookHandler
      */
     public function handle(array $payload, string $user): void
     {
-        $log = new FileLogger(Paths::logFile(), LogLevel::Info);
+        $log = new FileLogger(Paths::userLogFile($user), LogLevel::Info);
 
         try {
             $meta = UserConfigMetadataReader::read($user);
