@@ -4,13 +4,14 @@ declare(strict_types=1);
 
 namespace ZoneMirror\Interface\Ui;
 
-use RuntimeException;
-use ZoneMirror\Domain\AdminToken;
-use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Application\IndexZones;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Logging\LogLevel;
 use ZoneMirror\Infrastructure\Storage\AdminTokenStorage;
 use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
 use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Infrastructure\Storage\ZoneIndex;
 
 /**
  * WHM admin view-model for the Cloudflare API tokens section.
@@ -33,10 +34,12 @@ use ZoneMirror\Infrastructure\Storage\Paths;
 final class AdminTokensController
 {
     private ?AdminTokenStorage $storage;
+    private ?IndexZones $indexer;
 
-    public function __construct(?AdminTokenStorage $storage = null)
+    public function __construct(?AdminTokenStorage $storage = null, ?IndexZones $indexer = null)
     {
         $this->storage = $storage;
+        $this->indexer = $indexer;
     }
 
     /**
@@ -99,26 +102,34 @@ final class AdminTokensController
             }
             $tok = $storage->add($name, $plain);
 
-            // Best-effort verify. If the network or CF rejects, the token
-            // stays in storage with status=unverified — the operator can
-            // re-verify later from the UI without re-pasting it.
-            $verifyError = null;
+            // Refresh runs verify + listZones + writes the ZoneIndex slice
+            // for this token. Failures are logged and isolated by the
+            // indexer itself, so we never leave the storage in a broken
+            // state if CF is slow or down — the operator can re-verify.
             try {
-                [$status, $zones] = $this->probe($plain);
-                $storage->updateVerification($tok->id, $status, $zones);
-                $msg = sprintf(
+                $this->resolveIndexer()->refreshOne($tok->id);
+            } catch (\Throwable $e) {
+                $refreshed = $storage->find($tok->id);
+
+                return [
+                    sprintf('Token "%s" added (verification deferred).', $tok->name),
+                    'Verification failed: ' . $e->getMessage(),
+                ];
+            }
+            $refreshed = $storage->find($tok->id);
+            $zones = $refreshed?->zonesIndexed ?? 0;
+            $status = $refreshed?->status ?? '';
+
+            return [
+                sprintf(
                     'Token "%s" added. Verification: %s (%d zone%s reachable).',
                     $tok->name,
                     $status,
                     $zones,
                     $zones === 1 ? '' : 's',
-                );
-            } catch (\Throwable $e) {
-                $verifyError = 'Token saved but verification failed: ' . $e->getMessage();
-                $msg = sprintf('Token "%s" added (verification pending).', $tok->name);
-            }
-
-            return [$msg, $verifyError];
+                ),
+                null,
+            ];
         }
 
         if ($action === 'verify') {
@@ -127,20 +138,20 @@ final class AdminTokensController
             if ($existing === null) {
                 return ['', 'Token not found.'];
             }
-            $plain = $storage->plaintextFor($id);
-            if ($plain === null || $plain === '') {
-                return ['', 'Token ciphertext could not be decrypted.'];
+            try {
+                $this->resolveIndexer()->refreshOne($id);
+            } catch (\Throwable $e) {
+                return ['', 'Re-verify failed: ' . $e->getMessage()];
             }
-            [$status, $zones] = $this->probe($plain);
-            $storage->updateVerification($id, $status, $zones);
+            $after = $storage->find($id);
 
             return [
                 sprintf(
                     'Token "%s" re-verified: %s (%d zone%s).',
                     $existing->name,
-                    $status,
-                    $zones,
-                    $zones === 1 ? '' : 's',
+                    $after?->status ?? '',
+                    $after?->zonesIndexed ?? 0,
+                    ($after?->zonesIndexed ?? 0) === 1 ? '' : 's',
                 ),
                 null,
             ];
@@ -153,45 +164,20 @@ final class AdminTokensController
                 return ['', 'Token not found.'];
             }
             $storage->remove($id);
+            // Drop the token's zones from the index right away so cPanel
+            // users stop seeing this token as a possible source for their
+            // domains. Index lives in the daemon's territory but we have
+            // root here too.
+            try {
+                $this->resolveZoneIndex()->removeForToken($id);
+            } catch (\Throwable) {
+                // Index will self-heal on the next sweep.
+            }
 
             return [sprintf('Token "%s" removed.', $existing->name), null];
         }
 
         return ['', 'Unknown action.'];
-    }
-
-    /**
-     * Hit Cloudflare's /user/tokens/verify and, if the token is active,
-     * /zones to count what it can see. Returns (AdminToken::STATUS_*, zoneCount).
-     *
-     * @return array{0: string, 1: int}
-     */
-    private function probe(string $plaintext): array
-    {
-        if ($plaintext === '') {
-            throw new RuntimeException('Token is empty.');
-        }
-
-        $client = new CloudflareApiClient($plaintext);
-        $raw = $client->verifyTokenStatus();
-
-        $status = match ($raw) {
-            'active' => AdminToken::STATUS_OK,
-            'expired' => AdminToken::STATUS_EXPIRED,
-            'disabled' => AdminToken::STATUS_UNAUTHORIZED,
-            '' => AdminToken::STATUS_UNAUTHORIZED,
-            default => AdminToken::STATUS_PARTIAL_SCOPE,
-        };
-
-        $zones = 0;
-        if ($status === AdminToken::STATUS_OK) {
-            // Best-effort: a working token with zero visible zones still
-            // counts as ok — the operator may add scopes later. We do not
-            // demote the status here.
-            $zones = count($client->listZones());
-        }
-
-        return [$status, $zones];
     }
 
     private function resolveStorage(): AdminTokenStorage
@@ -204,5 +190,30 @@ final class AdminTokensController
         );
 
         return $this->storage;
+    }
+
+    private function resolveIndexer(): IndexZones
+    {
+        if ($this->indexer !== null) {
+            return $this->indexer;
+        }
+        $this->indexer = new IndexZones(
+            $this->resolveStorage(),
+            $this->resolveZoneIndex(),
+            new FileLogger(Paths::logFile(), LogLevel::Info),
+        );
+
+        return $this->indexer;
+    }
+
+    private ?ZoneIndex $zoneIndex = null;
+
+    private function resolveZoneIndex(): ZoneIndex
+    {
+        if ($this->zoneIndex === null) {
+            $this->zoneIndex = new ZoneIndex(Paths::zoneIndexFile());
+        }
+
+        return $this->zoneIndex;
     }
 }
