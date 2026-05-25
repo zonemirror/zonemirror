@@ -43,7 +43,13 @@ final class HookHandler
 
         try {
             $meta = UserConfigMetadataReader::read($user);
-            if (!$meta['enabled'] || $meta['zone_id'] === '' || !$meta['has_token']) {
+            // Two paths to Cloudflare: the user pasted their own token
+            // (source=user, has_token=true) OR an admin token covers this
+            // domain (source=admin, no per-user token). Either is enough
+            // to enqueue; the daemon resolves the credential at sync time.
+            $hasCredentialPath = $meta['has_token']
+                || $meta['source'] === \ZoneMirror\Infrastructure\Storage\UserConfigStorage::SOURCE_ADMIN;
+            if (!$meta['enabled'] || $meta['zone_id'] === '' || !$hasCredentialPath) {
                 return;
             }
 

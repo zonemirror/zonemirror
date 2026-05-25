@@ -16,11 +16,21 @@ use RuntimeException;
  *     "zone_id": "...",
  *     "zone_name": "example.com",
  *     "defaults": { "proxied": false },
- *     "token_encrypted": "...base64..."
+ *     "source": "admin" | "user",
+ *     "token_encrypted": "...base64..."          // only when source = user
  *   }
  *
- * The plaintext token is only ever held in memory; it never round-trips to
- * disk in cleartext.
+ * The `source` field distinguishes the two onboarding paths:
+ *   - "user": the cPanel user pasted their own Cloudflare token. The
+ *     daemon decrypts that ciphertext to authenticate against CF.
+ *   - "admin": the WHM admin has a token that covers this user's zone.
+ *     No per-user token is stored; the daemon resolves which admin
+ *     token to use via the zone index at sync time.
+ *
+ * Configs written before the source field existed default to "user"
+ * on load (they came from the v0.1 paste-token flow). The plaintext
+ * token is only ever held in memory; it never round-trips to disk in
+ * cleartext.
  */
 final class UserConfigStorage
 {
@@ -28,8 +38,11 @@ final class UserConfigStorage
     {
     }
 
+    public const SOURCE_USER = 'user';
+    public const SOURCE_ADMIN = 'admin';
+
     /**
-     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string}
+     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string}
      */
     public function load(string $user): array
     {
@@ -57,6 +70,10 @@ final class UserConfigStorage
         }
 
         $defaults = is_array($json['defaults'] ?? null) ? $json['defaults'] : [];
+        $rawSource = is_string($json['source'] ?? null) ? $json['source'] : '';
+        $source = in_array($rawSource, [self::SOURCE_USER, self::SOURCE_ADMIN], true)
+            ? $rawSource
+            : self::SOURCE_USER; // v0.1 configs predate the field
 
         return [
             'enabled' => (bool) ($json['enabled'] ?? false),
@@ -66,11 +83,12 @@ final class UserConfigStorage
                 'proxied' => (bool) ($defaults['proxied'] ?? false),
             ],
             'token' => $token,
+            'source' => $source,
         ];
     }
 
     /**
-     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token?: string} $data
+     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token?: string, source?: string} $data
      */
     public function save(string $user, array $data): void
     {
@@ -78,6 +96,11 @@ final class UserConfigStorage
         if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
             throw new RuntimeException('Unable to create user dir: ' . $dir);
         }
+
+        $rawSource = isset($data['source']) ? (string) $data['source'] : self::SOURCE_USER;
+        $source = in_array($rawSource, [self::SOURCE_USER, self::SOURCE_ADMIN], true)
+            ? $rawSource
+            : self::SOURCE_USER;
 
         $payload = [
             'version' => 1,
@@ -87,15 +110,22 @@ final class UserConfigStorage
             'defaults' => [
                 'proxied' => (bool) ($data['defaults']['proxied'] ?? false),
             ],
+            'source' => $source,
         ];
 
-        $providedToken = isset($data['token']) ? (string) $data['token'] : '';
-        if ($providedToken !== '') {
-            $payload['token_encrypted'] = $this->crypto->encrypt($providedToken);
-        } else {
-            $existing = $this->load($user);
-            if ($existing['token'] !== '') {
-                $payload['token_encrypted'] = $this->crypto->encrypt($existing['token']);
+        // Token ciphertext is only relevant for the user-pasted path. For
+        // admin-covered domains the daemon resolves the token via the zone
+        // index, and we deliberately do not retain anything decryptable
+        // in the user's home.
+        if ($source === self::SOURCE_USER) {
+            $providedToken = isset($data['token']) ? (string) $data['token'] : '';
+            if ($providedToken !== '') {
+                $payload['token_encrypted'] = $this->crypto->encrypt($providedToken);
+            } else {
+                $existing = $this->load($user);
+                if ($existing['token'] !== '') {
+                    $payload['token_encrypted'] = $this->crypto->encrypt($existing['token']);
+                }
             }
         }
 
@@ -117,7 +147,7 @@ final class UserConfigStorage
     }
 
     /**
-     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string}
+     * @return array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string}
      */
     private function empty(): array
     {
@@ -127,6 +157,7 @@ final class UserConfigStorage
             'zone_name' => '',
             'defaults' => ['proxied' => false],
             'token' => '',
+            'source' => self::SOURCE_USER,
         ];
     }
 }
