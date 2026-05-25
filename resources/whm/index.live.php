@@ -73,7 +73,7 @@ $statusBadge = static function (string $status): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZoneMirror — Admin</title>
   <style>
-    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #fafafa; }
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #fafafa; color: #222; }
     .card { max-width: 920px; margin: 1.5rem auto; padding: 1rem 1.25rem; background: #fff; border: 1px solid #ddd; border-radius: 6px; }
     .card h2 { margin-top: 0; display: flex; align-items: center; gap: 0.75rem; }
     .card h2 img.brand { height: 44px; width: auto; }
@@ -83,15 +83,58 @@ $statusBadge = static function (string $status): string {
     .muted { color: #666; font-size: 0.9em; }
     fieldset { margin-bottom: 1rem; border: 1px solid #e5e5e5; border-radius: 4px; padding: 0.75rem 1rem; }
     legend { font-weight: 600; padding: 0 0.5rem; }
-    textarea { width: 100%; min-height: 120px; font-family: monospace; }
-    input[type=text], input[type=password] { width: 100%; padding: 0.4rem 0.5rem; box-sizing: border-box; }
-    input[type=number] { width: 6em; padding: 0.4rem 0.5rem; }
+
+    /* form controls */
+    label { display: block; font-weight: 500; margin-bottom: 0.25rem; }
+    textarea { width: 100%; min-height: 120px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; padding: 0.5rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+    input[type=text], input[type=password] { width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; font-size: 1em; }
+    input[type=number] { width: 6em; padding: 0.4rem 0.5rem; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+    input[type=text]:focus, input[type=password]:focus, input[type=number]:focus, textarea:focus {
+      outline: none; border-color: #2a73c4; box-shadow: 0 0 0 3px rgba(42,115,196,0.18);
+    }
+    input[type=checkbox], input[type=radio] { vertical-align: middle; margin-right: 0.4rem; }
+
+    /* buttons */
+    button {
+      display: inline-block;
+      padding: 0.45rem 1rem;
+      font-size: 0.95em;
+      font-weight: 500;
+      line-height: 1.2;
+      border: 1px solid #2a73c4;
+      border-radius: 4px;
+      background: #2a73c4;
+      color: #fff;
+      cursor: pointer;
+      transition: background-color 0.12s, border-color 0.12s, box-shadow 0.12s;
+    }
+    button:hover    { background: #1f5fa6; border-color: #1f5fa6; }
+    button:active   { background: #194e89; border-color: #194e89; }
+    button:focus    { outline: none; box-shadow: 0 0 0 3px rgba(42,115,196,0.32); }
+    button.secondary,
+    button[name="action"][value="verify"] {
+      background: #fff; color: #2a73c4; border-color: #c2d4e8;
+    }
+    button.secondary:hover,
+    button[name="action"][value="verify"]:hover {
+      background: #f1f7fd; border-color: #2a73c4;
+    }
+    button.danger,
+    button[name="action"][value="remove"] {
+      background: #fff; color: #b53a3a; border-color: #e0c0c0;
+    }
+    button.danger:hover,
+    button[name="action"][value="remove"]:hover {
+      background: #fdf3f3; border-color: #b53a3a;
+    }
+
+    /* tables */
     table.tokens { width: 100%; border-collapse: collapse; margin-top: 0.5rem; }
-    table.tokens th, table.tokens td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; vertical-align: middle; }
-    table.tokens th { font-size: 0.85em; color: #666; font-weight: 600; }
-    table.tokens td.actions { text-align: right; }
-    button { padding: 0.4rem 0.9rem; cursor: pointer; }
-    button.link { background: none; border: none; color: #336; padding: 0; cursor: pointer; text-decoration: underline; }
+    table.tokens th, table.tokens td { text-align: left; padding: 0.65rem 0.75rem; border-bottom: 1px solid #eee; vertical-align: middle; }
+    table.tokens th { font-size: 0.8em; color: #666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; background: #fafbfc; }
+    table.tokens td.actions { text-align: right; white-space: nowrap; }
+    table.tokens td.actions form { display: inline-block; margin-left: 0.4rem; }
+
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #eef; color: #336; font-size: 0.85em; }
     .row { display: flex; gap: 1rem; align-items: end; }
     .row > div { flex: 1; }
