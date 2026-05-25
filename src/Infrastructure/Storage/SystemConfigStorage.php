@@ -9,7 +9,9 @@ use RuntimeException;
 /**
  * WHM-admin level configuration: global defaults, allowlist of users that may
  * enable the plugin, and rate-limit guardrails. Stored under
- * /var/cpanel/zonemirror/system.json owned by root:root, mode 0600.
+ * /var/cpanel/zonemirror/system.json owned by root:root, mode 0644 — the file
+ * carries no secrets (dry-run flag, allowlist, rate limit) and must be
+ * readable by the cPanel-user processes that run hooks and the UI.
  *
  * @phpstan-type SystemConfig array{
  *     defaults: array{proxied: bool, ttl: int},
@@ -73,7 +75,7 @@ final class SystemConfigStorage
     public function save(array $data): void
     {
         $dir = Paths::systemDir();
-        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
             throw new RuntimeException('Unable to create system dir: ' . $dir);
         }
         $path = Paths::systemConfigFile();
@@ -85,7 +87,7 @@ final class SystemConfigStorage
         if (@file_put_contents($tmp, $encoded, LOCK_EX) === false) {
             throw new RuntimeException('Unable to write system config.');
         }
-        @chmod($tmp, 0600);
+        @chmod($tmp, 0644);
         if (!@rename($tmp, $path)) {
             @unlink($tmp);
 

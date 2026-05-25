@@ -38,18 +38,33 @@ use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
  */
 final class UserController
 {
-    private readonly UserConfigStorage $storage;
+    private ?UserConfigStorage $storage;
     private readonly SystemConfigStorage $systemStorage;
     private readonly EnrolledUsers $enrolled;
-    private readonly FileLogger $log;
+    private ?FileLogger $log;
 
-    public function __construct(?UserConfigStorage $storage = null)
+    public function __construct(?UserConfigStorage $storage = null, ?FileLogger $log = null)
     {
-        $crypto = new ConfigCrypto(new KeyStore(Paths::systemKeyFile()));
-        $this->storage = $storage ?? new UserConfigStorage($crypto);
+        // Storage and log are bound to a specific user (the AEAD key and the
+        // log path both live under <user-home>/.zonemirror/). They are
+        // materialized lazily in handle()/save() once the user is known.
+        // Tests can inject pre-built collaborators here.
+        $this->storage = $storage;
+        $this->log = $log;
         $this->systemStorage = new SystemConfigStorage();
         $this->enrolled = new EnrolledUsers();
-        $this->log = new FileLogger(Paths::logFile(), LogLevel::Info);
+    }
+
+    private function storageFor(string $user): UserConfigStorage
+    {
+        return $this->storage ?? new UserConfigStorage(
+            new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
+        );
+    }
+
+    private function logFor(string $user): FileLogger
+    {
+        return $this->log ?? new FileLogger(Paths::userLogFile($user), LogLevel::Info);
     }
 
     /**
@@ -77,7 +92,7 @@ final class UserController
             }
         }
 
-        $cfg = $this->storage->load($user);
+        $cfg = $this->storageFor($user)->load($user);
         $depth = 0;
         $dead = 0;
         if ($cfg['enabled']) {
@@ -123,7 +138,8 @@ final class UserController
             $errors[] = 'Zone name is not a valid domain.';
         }
 
-        $current = $this->storage->load($user);
+        $storage = $this->storageFor($user);
+        $current = $storage->load($user);
         $effectiveToken = $token !== '' ? $token : $current['token'];
         $zoneId = $current['zone_id'];
 
@@ -141,7 +157,7 @@ final class UserController
             return [false, $errors];
         }
 
-        $this->storage->save($user, [
+        $storage->save($user, [
             'enabled' => $enabled,
             'zone_id' => $zoneId,
             'zone_name' => $zoneName,
@@ -155,7 +171,7 @@ final class UserController
             $this->enrolled->remove($user);
         }
 
-        $this->log->info('user config saved', [
+        $this->logFor($user)->info('user config saved', [
             'user' => $user,
             'enabled' => $enabled,
             'zone_name' => $zoneName,

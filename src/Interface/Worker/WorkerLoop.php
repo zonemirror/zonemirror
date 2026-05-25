@@ -56,8 +56,6 @@ final class WorkerLoop
         $this->installSignalHandlers();
         $this->log->info('worker started', ['pid' => getmypid()]);
 
-        $crypto = new ConfigCrypto(new KeyStore(Paths::systemKeyFile()));
-        $userStorage = new UserConfigStorage($crypto);
         $systemStorage = new SystemConfigStorage();
         $enrolled = new EnrolledUsers();
 
@@ -80,6 +78,13 @@ final class WorkerLoop
                 if ($this->isStopRequested()) {
                     break;
                 }
+                // Each user has their own master.key under ~user/.zonemirror/
+                // so one user's compromise cannot decrypt another user's
+                // Cloudflare token. The daemon runs as root and can read
+                // every per-user key.
+                $userStorage = new UserConfigStorage(
+                    new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
+                );
                 $userCfg = $userStorage->load($user);
                 if (!$userCfg['enabled'] || $userCfg['token'] === '' || $userCfg['zone_id'] === '') {
                     continue;

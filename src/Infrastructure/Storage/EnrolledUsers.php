@@ -58,7 +58,7 @@ final class EnrolledUsers
     private function write(array $users): void
     {
         $dir = Paths::systemDir();
-        if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
             throw new RuntimeException('Unable to create system dir: ' . $dir);
         }
         sort($users);

@@ -7,11 +7,18 @@ namespace ZoneMirror\Infrastructure\Storage;
 /**
  * Canonical filesystem layout for the plugin.
  *
- * - System defaults and the master encryption key live under
- *   /var/cpanel/zonemirror/ (root-owned, 0700).
- * - Per-user state (encrypted token, queue) lives under
- *   <user-home>/.zonemirror/ (user-owned, 0700) so hooks running as
- *   the cPanel user can write to their own queue without escalating to root.
+ * - Admin config under /var/cpanel/zonemirror/ (root-owned, dir 0755, files
+ *   0644). It only carries the dry-run flag, the allowlist, and the list of
+ *   enrolled users — no secrets — and is read in user-space by hooks and the
+ *   cPanel UI, so it must be world-readable.
+ * - Daemon log /var/cpanel/zonemirror/logs/zonemirror.log (root-only).
+ * - Per-user state under <user-home>/.zonemirror/ (user-owned, 0700):
+ *     - master.key   (the AEAD key that encrypts THIS user's token only)
+ *     - config.json  (encrypted token + zone metadata)
+ *     - queue.sqlite (hook → daemon event queue)
+ *     - log.txt      (user-space log written by hooks and the cPanel UI)
+ *   Keeping the AEAD key per-user means no shared secret exists that one
+ *   cPanel user could read to decrypt another user's token.
  *
  * All paths can be overridden via environment variables to support tests and
  * unusual installations.
@@ -36,11 +43,6 @@ final class Paths
         return self::systemDir() . '/system.json';
     }
 
-    public static function systemKeyFile(): string
-    {
-        return self::systemDir() . '/master.key';
-    }
-
     public static function enrolledUsersFile(): string
     {
         return self::systemDir() . '/enrolled-users';
@@ -61,9 +63,19 @@ final class Paths
         return self::userDir($user) . '/config.json';
     }
 
+    public static function userKeyFile(string $user): string
+    {
+        return self::userDir($user) . '/master.key';
+    }
+
     public static function userQueueFile(string $user): string
     {
         return self::userDir($user) . '/queue.sqlite';
+    }
+
+    public static function userLogFile(string $user): string
+    {
+        return self::userDir($user) . '/log.txt';
     }
 
     private static function userHome(string $user): string
