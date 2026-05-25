@@ -138,6 +138,12 @@ if ($autoRefresh) {
   table.zm-diff col.c-status { width: 110px; }
   table.zm-diff col.c-type { width: 70px; }
   table.zm-diff col.c-name { width: 22%; }
+  table.zm-diff col.c-action { width: 130px; }
+  table.zm-diff td.action { white-space: nowrap; font-size: 0.85em; }
+  .zm-pill.create  { background: #e0eefb; color: #1f5fa6; }
+  .zm-pill.replace { background: #fff1c2; color: #7a5b00; }
+  .zm-pill.delete  { background: #fbd5d5; color: #a02020; }
+  .zm-pill.noop    { background: #f0f0f0; color: #999; }
   table.zm-diff tr.identical td { color: #999; }
   table.zm-diff tr.different .val,
   table.zm-diff tr.cpanel_only .val.cp,
@@ -305,6 +311,7 @@ if ($autoRefresh) {
           <col class="c-name">
           <col>
           <col>
+          <col class="c-action">
         </colgroup>
         <thead>
           <tr>
@@ -314,6 +321,7 @@ if ($autoRefresh) {
             <th>Name</th>
             <th>cPanel</th>
             <th>Cloudflare</th>
+            <th>Will do</th>
           </tr>
         </thead>
         <tbody>
@@ -348,6 +356,17 @@ if ($autoRefresh) {
               <td class="name"><?= $h($name) ?></td>
               <td class="val cp"><?= $h($localTxt) ?></td>
               <td class="val cf"><?= $h($remoteTxt) ?></td>
+              <td class="action">
+                <?php if ($status === DnsDiff::STATUS_IDENTICAL): ?>
+                  <span class="zm-pill noop">No-op</span>
+                <?php elseif ($status === DnsDiff::STATUS_DIFFERENT): ?>
+                  <span class="zm-pill replace">Replace on CF</span>
+                <?php elseif ($status === DnsDiff::STATUS_CPANEL_ONLY): ?>
+                  <span class="zm-pill create">Create on CF</span>
+                <?php else: ?>
+                  <span class="zm-pill delete">Delete from CF</span>
+                <?php endif; ?>
+              </td>
             </tr>
           <?php endforeach; ?>
         </tbody>
