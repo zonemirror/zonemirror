@@ -155,6 +155,16 @@ install_service() {
   fi
 }
 
+register_whm_appconfig() {
+  # WHM > Plugins reads /var/cpanel/apps/<name>.conf. The conf is installed
+  # via /usr/local/cpanel/bin/register_appconfig; it validates the manifest
+  # and writes the apps/<name>.conf file (plus the menu hooks). Idempotent.
+  if [[ -x /usr/local/cpanel/bin/register_appconfig ]]; then
+    /usr/local/cpanel/bin/register_appconfig \
+      "$PREFIX/packaging/${PLUGIN_ID}_whostmgr.conf" >/dev/null 2>&1 || true
+  fi
+}
+
 register_plugin() {
   # register_cpanelplugin only understands the legacy "key:value" manifest
   # with the icon embedded as base64 in an `image:` line. We keep the
@@ -215,6 +225,7 @@ main() {
   install_service
   install_cli
   register_plugin
+  register_whm_appconfig
   regenerate_sprites
   print_summary
 }
