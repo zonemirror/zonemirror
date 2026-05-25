@@ -13,11 +13,21 @@ use RuntimeException;
  * carries no secrets (dry-run flag, allowlist, rate limit) and must be
  * readable by the cPanel-user processes that run hooks and the UI.
  *
+ * `email_normalization` is the WHM-admin DNS rewrite policy applied to every
+ * zone the plugin syncs. It exists so the operator can centralise the email
+ * authentication stack (DMARC reporting to the sysadmin mailbox, SPF includes
+ * for the server's IPv6 and outbound mail host, etc.) without having to
+ * touch each per-user zone file in cPanel.
+ *
  * @phpstan-type SystemConfig array{
  *     defaults: array{proxied: bool, ttl: int},
  *     allowed_users: 'all'|list<string>,
  *     rate_limit_rps: int,
- *     dry_run: bool
+ *     dry_run: bool,
+ *     email_normalization: array{
+ *         dmarc_template: string,
+ *         spf_extras: list<string>
+ *     }
  * }
  */
 final class SystemConfigStorage
@@ -64,6 +74,24 @@ final class SystemConfigStorage
         }
         if (isset($json['dry_run'])) {
             $merged['dry_run'] = (bool) $json['dry_run'];
+        }
+        if (isset($json['email_normalization']) && is_array($json['email_normalization'])) {
+            $en = $json['email_normalization'];
+            if (isset($en['dmarc_template']) && is_string($en['dmarc_template'])) {
+                $merged['email_normalization']['dmarc_template'] = trim($en['dmarc_template']);
+            }
+            if (isset($en['spf_extras']) && is_array($en['spf_extras'])) {
+                $extras = [];
+                foreach ($en['spf_extras'] as $e) {
+                    if (is_string($e)) {
+                        $e = trim($e);
+                        if ($e !== '') {
+                            $extras[] = $e;
+                        }
+                    }
+                }
+                $merged['email_normalization']['spf_extras'] = $extras;
+            }
         }
 
         return $merged;
@@ -118,6 +146,10 @@ final class SystemConfigStorage
             'allowed_users' => [],
             'rate_limit_rps' => 5,
             'dry_run' => true,
+            'email_normalization' => [
+                'dmarc_template' => '',
+                'spf_extras' => [],
+            ],
         ];
     }
 }

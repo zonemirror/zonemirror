@@ -11,6 +11,8 @@ use ZoneMirror\Domain\RecordType;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
 use ZoneMirror\Infrastructure\Cpanel\BindZoneParser;
 use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Mapping\EmailDnsNormalizer;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
 
 /**
  * Compute the per-record diff between /var/named/<zone>.db and the
@@ -40,6 +42,8 @@ final class ComputeDiff
 
     public function __construct(
         private readonly BindZoneParser $parser = new BindZoneParser(),
+        private readonly EmailDnsNormalizer $normalizer = new EmailDnsNormalizer(),
+        private readonly SystemConfigStorage $systemConfig = new SystemConfigStorage(),
     ) {
     }
 
@@ -59,6 +63,19 @@ final class ComputeDiff
         }
         $contents = (string) file_get_contents($path);
         $localRecords = $this->parser->parse($contents, $zoneName);
+
+        // Apply the WHM-admin email DNS policy (DMARC override, SPF extras)
+        // BEFORE the comparison runs, so the diff table — and any later
+        // apply — uses the normalised payload as the cPanel side. Without
+        // this, the user would see "Replace" rows where local and remote
+        // are actually going to end up identical once we push.
+        $policy = $this->systemConfig->load()['email_normalization'] ?? [];
+        if (is_array($policy)) {
+            $localRecords = array_map(
+                fn (DnsRecord $r): DnsRecord => $this->normalizer->normalize($r, $zoneName, $policy),
+                $localRecords,
+            );
+        }
 
         $client = new CloudflareApiClient($cloudflareToken);
         $remoteRecords = $client->listRecords($zoneId);
