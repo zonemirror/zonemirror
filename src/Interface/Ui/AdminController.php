@@ -21,6 +21,8 @@ use ZoneMirror\Infrastructure\Version\VersionReader;
  *     allowed_users_list: string,
  *     rate_limit_rps: int,
  *     dry_run: bool,
+ *     dmarc_template: string,
+ *     spf_extras: string,
  *     enrolled: list<string>,
  *     installed_version: string
  * }
@@ -67,6 +69,8 @@ final class AdminController
             'allowed_users_list' => $list,
             'rate_limit_rps' => $cfg['rate_limit_rps'],
             'dry_run' => $cfg['dry_run'],
+            'dmarc_template' => (string) ($cfg['email_normalization']['dmarc_template'] ?? ''),
+            'spf_extras' => implode("\n", (array) ($cfg['email_normalization']['spf_extras'] ?? [])),
             'enrolled' => $this->enrolled->all(),
             'installed_version' => VersionReader::installed(),
         ];
@@ -94,6 +98,13 @@ final class AdminController
         $ttl = max(60, (int) ($post['default_ttl'] ?? 300));
         $rps = max(1, min(50, (int) ($post['rate_limit_rps'] ?? 5)));
 
+        $dmarcTemplate = trim((string) ($post['dmarc_template'] ?? ''));
+        $spfLinesRaw = preg_split('/\R+/', (string) ($post['spf_extras'] ?? '')) ?: [];
+        $spfExtras = array_values(array_filter(
+            array_map(static fn (string $s): string => trim($s), $spfLinesRaw),
+            static fn (string $s): bool => $s !== '',
+        ));
+
         try {
             $this->storage->save([
                 'defaults' => [
@@ -103,6 +114,10 @@ final class AdminController
                 'allowed_users' => $mode === 'all' ? 'all' : $list,
                 'rate_limit_rps' => $rps,
                 'dry_run' => isset($post['dry_run']) && (string) $post['dry_run'] !== '',
+                'email_normalization' => [
+                    'dmarc_template' => $dmarcTemplate,
+                    'spf_extras' => $spfExtras,
+                ],
             ]);
 
             return [true, []];

@@ -407,6 +407,40 @@ $justConnected = $tokensVm['message'] !== '';
           Dry-run mode (log intended changes; do not call Cloudflare)</label></p>
       </fieldset>
 
+      <fieldset>
+        <legend>Email DNS normalisation</legend>
+        <p class="muted" style="margin: 0 0 0.8rem;">
+          Applied to every domain&rsquo;s diff before it is shown to the
+          user. The local cPanel zone file is never modified — these
+          transforms only affect what gets pushed to Cloudflare.
+          Use <code>{domain}</code> as a placeholder for the zone name.
+        </p>
+
+        <p>
+          <label>DMARC override (<code>_dmarc.&lt;domain&gt;</code> TXT)
+            <input type="text" name="dmarc_template"
+                   value="<?= $h($adminVm['dmarc_template']) ?>"
+                   placeholder="v=DMARC1; p=none; rua=mailto:sysadmin@your-host.tld; ruf=mailto:sysadmin@your-host.tld">
+          </label>
+          <span class="muted" style="font-size: 0.85em;">
+            If set, replaces every domain&rsquo;s <code>_dmarc</code> TXT
+            with this string. Leave blank to keep what cPanel emits.
+          </span>
+        </p>
+
+        <p>
+          <label>SPF extras (one mechanism per line)
+            <textarea name="spf_extras" rows="4" style="font-family: ui-monospace, monospace; font-size: 0.9em;"
+              placeholder="+ip6:2a01:4f8:2210:1792::2&#10;+a:mail.{domain}"><?= $h($adminVm['spf_extras']) ?></textarea>
+          </label>
+          <span class="muted" style="font-size: 0.85em;">
+            Each line is spliced into the domain&rsquo;s <code>v=spf1</code>
+            TXT just before the terminal <code>~all</code>/<code>-all</code>.
+            Duplicates are skipped, so re-applying is safe.
+          </span>
+        </p>
+      </fieldset>
+
       <button type="submit">Save</button>
     </form>
 
