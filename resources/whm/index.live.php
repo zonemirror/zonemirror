@@ -307,8 +307,9 @@ $justConnected = $tokensVm['message'] !== '';
     <table class="tokens">
       <thead>
         <tr>
-          <th>Cloudflare account</th>
+          <th>Cloudflare connection</th>
           <th>Status</th>
+          <th>Accounts</th>
           <th>Zones</th>
           <th>Last verified</th>
           <th></th>
@@ -316,12 +317,14 @@ $justConnected = $tokensVm['message'] !== '';
       </thead>
       <tbody>
         <?php foreach ($tokensVm['tokens'] as $t): ?>
+          <?php $accountsCount = $tokensVm['accounts_count_by_token'][$t->id] ?? 0; ?>
           <tr>
             <td>
               <strong><?= $h($t->name) ?></strong>
               <div class="muted" style="font-size: 0.78em; margin-top: 0.15rem;">id <code><?= $h($t->id) ?></code></div>
             </td>
             <td><?= $statusBadge($t->status) ?></td>
+            <td><?= $accountsCount > 0 ? (int) $accountsCount : '—' ?></td>
             <td><?= (int) $t->zonesIndexed ?></td>
             <td class="muted">
               <?= $t->lastVerifiedAt > 0 ? $h(gmdate('Y-m-d H:i \U\T\C', $t->lastVerifiedAt)) : 'never' ?>
