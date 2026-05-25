@@ -7,21 +7,32 @@ namespace ZoneMirror\Infrastructure\Storage;
 /**
  * Canonical filesystem layout for the plugin.
  *
- * - Admin config under /var/cpanel/zonemirror/ (root-owned, dir 0755, files
- *   0644). It only carries the dry-run flag, the allowlist, and the list of
- *   enrolled users — no secrets — and is read in user-space by hooks and the
- *   cPanel UI, so it must be world-readable.
- * - Daemon log /var/cpanel/zonemirror/logs/zonemirror.log (root-only).
- * - Per-user state under <user-home>/.zonemirror/ (user-owned, 0700):
- *     - master.key   (the AEAD key that encrypts THIS user's token only)
- *     - config.json  (encrypted token + zone metadata)
- *     - queue.sqlite (hook → daemon event queue)
- *     - log.txt      (user-space log written by hooks and the cPanel UI)
- *   Keeping the AEAD key per-user means no shared secret exists that one
- *   cPanel user could read to decrypt another user's token.
+ * Under /var/cpanel/zonemirror/ (root-owned, dir 0755):
+ *   - system.json       0644  dry-run flag, allowlist, rate limit. No secrets.
+ *   - enrolled-users    0644  list of cPanel users that opted in.
+ *   - logs/             0700  daemon log; user-side processes write per-user.
+ *   - admin-tokens.json 0600  WHM-admin Cloudflare tokens (AEAD-ciphertext).
+ *   - master.key        0600  AEAD key for admin secrets only. Root-only.
+ *   - zone-index.sqlite 0644  CF zones reachable via admin tokens, indexed
+ *                             by domain. World-readable so the cPanel UI can
+ *                             show "your domain is in zone X (admin)"; only
+ *                             the zone id and name are stored here, never
+ *                             tokens or any other secret.
  *
- * All paths can be overridden via environment variables to support tests and
- * unusual installations.
+ * Per cPanel user under <user-home>/.zonemirror/ (user-owned, 0700):
+ *   - master.key   0600 user  AEAD key for THIS user's token only (case 2).
+ *   - config.json  0600 user  connection list + optional user-owned CF token.
+ *   - queue.sqlite 0600 user  hook → daemon event queue.
+ *   - log.txt      0600 user  user-facing log.
+ *
+ * The two AEAD keys are independent. The admin master.key (root-only)
+ * encrypts the admin tokens that the daemon uses on behalf of any
+ * enrolled cPanel user. Each user has their own master.key that encrypts
+ * the user's own CF token (case 2). No single key compromises more than
+ * its scope.
+ *
+ * All paths can be overridden via environment variables to support tests
+ * and unusual installations.
  */
 final class Paths
 {
@@ -51,6 +62,34 @@ final class Paths
     public static function logFile(): string
     {
         return self::systemDir() . '/logs/zonemirror.log';
+    }
+
+    /**
+     * AEAD key for admin-scoped secrets (admin Cloudflare tokens). Created
+     * lazily by KeyStore the first time the daemon or the WHM admin UI
+     * encrypts something here. Distinct from each user's master.key.
+     */
+    public static function adminKeyFile(): string
+    {
+        return self::systemDir() . '/master.key';
+    }
+
+    /**
+     * Encrypted list of admin Cloudflare tokens managed in WHM.
+     */
+    public static function adminTokensFile(): string
+    {
+        return self::systemDir() . '/admin-tokens.json';
+    }
+
+    /**
+     * SQLite index of CF zones reachable through admin tokens, indexed by
+     * domain name so the cPanel UI can resolve "is this domain covered?"
+     * without exposing token material.
+     */
+    public static function zoneIndexFile(): string
+    {
+        return self::systemDir() . '/zone-index.sqlite';
     }
 
     public static function userDir(string $user): string
