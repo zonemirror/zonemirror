@@ -120,6 +120,25 @@ final class ZoneIndex
         return (int) $stmt->fetchColumn();
     }
 
+    /**
+     * How many distinct Cloudflare accounts the given token can see.
+     * A single token can be scoped to "all zones in account X" (count
+     * 1) or "all zones across all the user's accounts" (count > 1).
+     * Used by the WHM UI to surface multi-account coverage.
+     */
+    public function countAccountsForToken(string $tokenId): int
+    {
+        $pdo = $this->pdo();
+        $stmt = $pdo->prepare(
+            'SELECT COUNT(DISTINCT cf_account_id)
+             FROM zones
+             WHERE admin_token_id = ? AND cf_account_id != ""'
+        );
+        $stmt->execute([$tokenId]);
+
+        return (int) $stmt->fetchColumn();
+    }
+
     public function count(): int
     {
         $pdo = $this->pdo();

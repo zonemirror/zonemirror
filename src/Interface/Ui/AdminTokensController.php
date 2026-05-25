@@ -26,6 +26,7 @@ use ZoneMirror\Infrastructure\Storage\ZoneIndex;
  * @phpstan-type AdminTokensViewModel array{
  *     allowed: bool,
  *     tokens: list<AdminToken>,
+ *     accounts_count_by_token: array<string, int>,
  *     errors: list<string>,
  *     message: string,
  *     csrf: string
@@ -79,9 +80,20 @@ final class AdminTokensController
             }
         }
 
+        $tokens = $storage->all();
+        $accountsByToken = [];
+        foreach ($tokens as $t) {
+            try {
+                $accountsByToken[$t->id] = $this->resolveZoneIndex()->countAccountsForToken($t->id);
+            } catch (\Throwable) {
+                $accountsByToken[$t->id] = 0;
+            }
+        }
+
         return [
             'allowed' => true,
-            'tokens' => $storage->all(),
+            'tokens' => $tokens,
+            'accounts_count_by_token' => $accountsByToken,
             'errors' => $errors,
             'message' => $message,
             'csrf' => Csrf::token(),
@@ -118,15 +130,18 @@ final class AdminTokensController
             }
             $refreshed = $storage->find($tok->id);
             $zones = $refreshed?->zonesIndexed ?? 0;
-            $status = $refreshed?->status ?? '';
+            $accounts = $this->resolveZoneIndex()->countAccountsForToken($tok->id);
 
             return [
                 sprintf(
-                    'Token "%s" added. Verification: %s (%d zone%s reachable).',
+                    'Token "%s" added. Found %d zone%s%s reachable.%s',
                     $tok->name,
-                    $status,
                     $zones,
                     $zones === 1 ? '' : 's',
+                    $accounts > 1 ? sprintf(' across %d Cloudflare accounts', $accounts) : '',
+                    $accounts > 1
+                        ? ' If some accounts or domains are missing, connect another token below.'
+                        : '',
                 ),
                 null,
             ];
@@ -144,14 +159,16 @@ final class AdminTokensController
                 return ['', 'Re-verify failed: ' . $e->getMessage()];
             }
             $after = $storage->find($id);
+            $zones = $after?->zonesIndexed ?? 0;
+            $accounts = $this->resolveZoneIndex()->countAccountsForToken($id);
 
             return [
                 sprintf(
-                    'Token "%s" re-verified: %s (%d zone%s).',
+                    'Token "%s" re-verified: %d zone%s%s.',
                     $existing->name,
-                    $after?->status ?? '',
-                    $after?->zonesIndexed ?? 0,
-                    ($after?->zonesIndexed ?? 0) === 1 ? '' : 's',
+                    $zones,
+                    $zones === 1 ? '' : 's',
+                    $accounts > 1 ? sprintf(' across %d accounts', $accounts) : '',
                 ),
                 null,
             ];
