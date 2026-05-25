@@ -36,9 +36,23 @@ final class CloudflareApiClient
 
     public function verifyToken(): bool
     {
-        $resp = $this->send('GET', '/user/tokens/verify');
+        return $this->verifyTokenStatus() === 'active';
+    }
 
-        return $resp->isSuccess() && ($resp->body['result']['status'] ?? null) === 'active';
+    /**
+     * Raw Cloudflare token status. Returns the literal string CF gives us
+     * (typically "active", "expired", "disabled") or '' when CF rejects the
+     * request before returning a status (e.g. HTTP 401 — token is just
+     * wrong, not expired). Callers turn this into AdminToken::STATUS_*.
+     */
+    public function verifyTokenStatus(): string
+    {
+        $resp = $this->send('GET', '/user/tokens/verify');
+        if (!$resp->isSuccess()) {
+            return '';
+        }
+
+        return (string) ($resp->body['result']['status'] ?? '');
     }
 
     public function findZoneId(string $zoneName): ?string
