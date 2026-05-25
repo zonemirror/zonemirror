@@ -43,6 +43,11 @@ fi
 
 /usr/local/cpanel/bin/unregister_cpanelplugin "$PREFIX/packaging/zonemirror.cpanelplugin" 2>/dev/null || true
 
+# Remove the WHM appconfig entry (mirrors install.sh:register_whm_appconfig).
+if [[ -x /usr/local/cpanel/bin/unregister_appconfig ]]; then
+  /usr/local/cpanel/bin/unregister_appconfig "$PLUGIN_ID" >/dev/null 2>&1 || true
+fi
+
 rm -f "$CLI_SYMLINK" "$DYNAMICUI_CONF" "$JUPITER_APP_ICON" "$WHM_ADDON_ICON"
 rm -rf "$PREFIX" "$LIVEAPI_DIR" "$WHM_DIR" "$ICON_TARGET_DIR"
 
