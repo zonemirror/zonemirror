@@ -77,7 +77,8 @@ if ($autoRefresh) {
 ?>
 
 <style>
-  .zonemirror-wrap { max-width: 980px; }
+  .zonemirror-wrap { max-width: none; }
+  .zonemirror-wrap .narrow { max-width: 720px; }
 
   /* connected-domain banner */
   .zm-banner {
@@ -127,11 +128,16 @@ if ($autoRefresh) {
   .zm-actions-bar .spacer { flex: 1; }
   .zm-actions-bar small { color: #666; }
 
-  table.zm-diff { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+  table.zm-diff { width: 100%; border-collapse: collapse; font-size: 0.92em; table-layout: fixed; }
   table.zm-diff th, table.zm-diff td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid #eee; vertical-align: top; }
   table.zm-diff th { font-size: 0.75em; text-transform: uppercase; color: #666; background: #fafbfc; letter-spacing: 0.04em; }
-  table.zm-diff td.name { word-break: break-all; max-width: 260px; }
-  table.zm-diff td.val  { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; word-break: break-all; max-width: 280px; }
+  table.zm-diff td.name { word-break: break-all; }
+  table.zm-diff td.val  { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; word-break: break-all; }
+  /* fixed-layout column widths so the long content columns flex to fill */
+  table.zm-diff col.c-check { width: 36px; }
+  table.zm-diff col.c-status { width: 110px; }
+  table.zm-diff col.c-type { width: 70px; }
+  table.zm-diff col.c-name { width: 22%; }
   table.zm-diff tr.identical td { color: #999; }
   table.zm-diff tr.different .val,
   table.zm-diff tr.cpanel_only .val.cp,
@@ -292,11 +298,19 @@ if ($autoRefresh) {
       </div>
 
       <table class="zm-diff">
+        <colgroup>
+          <col class="c-check">
+          <col class="c-status">
+          <col class="c-type">
+          <col class="c-name">
+          <col>
+          <col>
+        </colgroup>
         <thead>
           <tr>
-            <th style="width: 1px;">&nbsp;</th>
-            <th style="width: 1px;">Status</th>
-            <th style="width: 1px;">Type</th>
+            <th>&nbsp;</th>
+            <th>Status</th>
+            <th>Type</th>
             <th>Name</th>
             <th>cPanel</th>
             <th>Cloudflare</th>
