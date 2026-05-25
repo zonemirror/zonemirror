@@ -258,17 +258,17 @@ final class UserController
 
         $storage = $this->storageFor($user);
         $existing = $storage->load($user);
-        // initial_seed_state=pending tells the daemon to backfill from
-        // /var/named/<zone>.db on its next cycle, so Cloudflare ends up
-        // mirroring the records that already exist locally — not just the
-        // future deltas the hooks would catch.
+        // sync_state=pending_diff signals the daemon to compute the diff
+        // between /var/named/<zone>.db and Cloudflare on its next cycle.
+        // The UI then shows the per-record review table; nothing is pushed
+        // to Cloudflare until the user explicitly applies rows.
         $storage->save($user, [
             'enabled' => true,
             'zone_id' => $hit['cf_zone_id'],
             'zone_name' => $domain,
             'defaults' => $existing['defaults'],
             'source' => UserConfigStorage::SOURCE_ADMIN,
-            'initial_seed_state' => UserConfigStorage::SEED_PENDING,
+            'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
         ]);
 
         $this->enrolled->enroll($user);
@@ -279,7 +279,7 @@ final class UserController
             'admin_token_id' => $hit['admin_token_id'],
         ]);
 
-        return [true, [], sprintf('%s is now syncing to Cloudflare. Existing DNS records will be propagated in the background.', $domain)];
+        return [true, [], sprintf('%s connected. Computing diff with Cloudflare…', $domain)];
     }
 
     /**

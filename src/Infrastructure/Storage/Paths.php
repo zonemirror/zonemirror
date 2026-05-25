@@ -18,6 +18,10 @@ namespace ZoneMirror\Infrastructure\Storage;
  *                             show "your domain is in zone X (admin)"; only
  *                             the zone id and name are stored here, never
  *                             tokens or any other secret.
+ *   - users/<user>/diff.json
+ *                       0644  per-user computed diff between cPanel-local
+ *                             and Cloudflare. Root writes (daemon), the user
+ *                             reads. Non-sensitive: only zone records.
  *
  * Per cPanel user under <user-home>/.zonemirror/ (user-owned, 0700):
  *   - master.key   0600 user  AEAD key for THIS user's token only (case 2).
@@ -90,6 +94,16 @@ final class Paths
     public static function zoneIndexFile(): string
     {
         return self::systemDir() . '/zone-index.sqlite';
+    }
+
+    /**
+     * Per-user diff file the daemon computes and the cPanel UI consumes.
+     * Lives under the system tree (not the user's home) so the daemon
+     * doesn't need to follow user-owned symlinks to write it.
+     */
+    public static function userDiffFile(string $user): string
+    {
+        return self::systemDir() . '/users/' . $user . '/diff.json';
     }
 
     public static function userDir(string $user): string
