@@ -103,7 +103,36 @@ final class WorkerLoop
                     new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
                 );
                 $userCfg = $userStorage->load($user);
-                if (!$userCfg['enabled'] || $userCfg['token'] === '' || $userCfg['zone_id'] === '') {
+                if (!$userCfg['enabled'] || $userCfg['zone_id'] === '') {
+                    continue;
+                }
+
+                // Resolve the Cloudflare token to use for this user/domain:
+                //   - source=user: the user pasted their own token (v0.1 flow).
+                //   - source=admin: no per-user token; the daemon looks the
+                //     zone up in the zone index, identifies the admin token
+                //     that owns it, and decrypts that token (root can read
+                //     every admin master.key by design).
+                $plainToken = $userCfg['token'];
+                if ($plainToken === '' && $userCfg['source'] === UserConfigStorage::SOURCE_ADMIN) {
+                    $hit = $zoneIndex->findByDomain($userCfg['zone_name']);
+                    if ($hit === null) {
+                        $this->log->info('worker: admin zone no longer covered, skipping', [
+                            'user' => $user,
+                            'zone' => $userCfg['zone_name'],
+                        ]);
+                        continue;
+                    }
+                    $plainToken = (string) ($adminTokens->plaintextFor($hit['admin_token_id']) ?? '');
+                    if ($plainToken === '') {
+                        $this->log->warning('worker: admin token undecryptable, skipping', [
+                            'user' => $user,
+                            'admin_token_id' => $hit['admin_token_id'],
+                        ]);
+                        continue;
+                    }
+                }
+                if ($plainToken === '') {
                     continue;
                 }
 
@@ -112,7 +141,7 @@ final class WorkerLoop
                     continue;
                 }
 
-                $client = new CloudflareApiClient($userCfg['token']);
+                $client = new CloudflareApiClient($plainToken);
                 $snapshot = new ZoneSnapshot($client->listRecords($userCfg['zone_id']));
                 $processor = new ProcessEvent($client, $this->log, dryRun: $sysCache['dry_run']);
 
