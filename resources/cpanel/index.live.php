@@ -29,6 +29,13 @@ use ZoneMirror\Domain\DnsDiff;
 use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
 use ZoneMirror\Interface\Ui\UserController;
 
+// Private-Use Area sentinels for the Cloudflare-style cloud icons. Top-
+// level `const` is not hoisted like function declarations are, so they
+// have to be declared before the template (which calls helpers that
+// reference them) executes. See zm_cloud_swap() at the bottom of file.
+const ZM_PROXIED_MARK = "\u{F8E1}";
+const ZM_DNSONLY_MARK = "\u{F8E2}";
+
 include '/usr/local/cpanel/php/cpanel.php';
 $cpanel = new CPANEL();
 
@@ -119,44 +126,212 @@ if ($autoRefresh) {
   .zm-summary .card.miss-l { border-color: #c2d4e8; background: #f1f7fd; }
   .zm-summary .card.miss-r { border-color: #e0c0c0; background: #fdf3f3; }
 
-  .zm-actions-bar {
-    display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
-    border: 1px solid #e5e5e5; border-radius: 6px; padding: 0.65rem 0.85rem;
-    background: #fafafa; margin: 0.75rem 0;
-  }
-  .zm-actions-bar form { display: inline-block; margin: 0; }
-  .zm-actions-bar .spacer { flex: 1; }
-  .zm-actions-bar small { color: #666; }
-
-  table.zm-diff { width: 100%; border-collapse: collapse; font-size: 0.92em; table-layout: fixed; }
-  table.zm-diff th, table.zm-diff td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid #eee; vertical-align: top; }
-  table.zm-diff th { font-size: 0.75em; text-transform: uppercase; color: #666; background: #fafbfc; letter-spacing: 0.04em; }
-  table.zm-diff td.name { word-break: break-all; }
-  table.zm-diff td.val  { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em; word-break: break-all; }
-  /* fixed-layout column widths so the long content columns flex to fill */
-  table.zm-diff col.c-check { width: 36px; }
-  table.zm-diff col.c-status { width: 110px; }
-  table.zm-diff col.c-type { width: 70px; }
-  table.zm-diff col.c-name { width: 22%; }
-  table.zm-diff col.c-action { width: 130px; }
-  table.zm-diff td.action { white-space: nowrap; font-size: 0.85em; }
-  .zm-pill.create  { background: #e0eefb; color: #1f5fa6; }
+  /* action pills (used by cards) */
+  .zm-pill.create  { background: #d9f1e1; color: #0a5f1f; }
   .zm-pill.replace { background: #fff1c2; color: #7a5b00; }
   .zm-pill.delete  { background: #fbd5d5; color: #a02020; }
   .zm-pill.noop    { background: #f0f0f0; color: #999; }
-  table.zm-diff tr.identical td { color: #999; }
-  table.zm-diff tr.different .val,
-  table.zm-diff tr.cpanel_only .val.cp,
-  table.zm-diff tr.cloudflare_only .val.cf { background: #fffaeb; }
-  table.zm-diff input[type=checkbox] { transform: scale(1.1); }
+
+  /* filter chips */
+  .zm-filter { display: flex; gap: 0.4rem; margin: 0.75rem 0 1rem; flex-wrap: wrap; }
+  .zm-filter button {
+    background: #fff; border: 1px solid #d4d4d4; border-radius: 999px;
+    padding: 0.3rem 0.85rem; font-size: 0.85em; cursor: pointer; color: #555;
+  }
+  .zm-filter button.active { background: #1f5fa6; border-color: #1f5fa6; color: #fff; }
+  .zm-filter button:hover:not(.active) { background: #f5f5f5; }
+
+  /* PR-style diff cards */
+  .zm-cards { display: flex; flex-direction: column; gap: 0.75rem; }
+  .zm-card {
+    border: 1px solid #d4d4d4; border-left-width: 4px; border-radius: 6px;
+    background: #fff; overflow: hidden;
+  }
+  .zm-card.status-different     { border-left-color: #d9a700; }
+  .zm-card.status-cpanel_only   { border-left-color: #1f8a3e; }
+  .zm-card.status-cloudflare_only { border-left-color: #c53030; }
+  .zm-card.status-identical     { border-left-color: #ccc; opacity: 0.75; }
+
+  .zm-card-head {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 0.55rem 0.85rem; background: #fafbfc;
+    user-select: none; border-bottom: 1px solid #eee;
+    cursor: pointer;
+  }
+  .zm-card-head input[type=checkbox] { transform: scale(1.15); margin: 0; }
+  .zm-card-head .zm-rtype { font-weight: 600; color: #444; font-size: 0.92em; }
+  .zm-card-head .zm-rname {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em; word-break: break-all; flex: 1; color: #222;
+  }
+
+  .zm-card-body { padding: 0.6rem 0.85rem; }
+  .zm-line {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em;
+    padding: 0.35rem 0.6rem; border-radius: 4px; margin: 0.15rem 0;
+    word-break: break-all; white-space: pre-wrap;
+  }
+  .zm-line-del { background: #fdf2f2; color: #842029; }
+  .zm-line-add { background: #f0faf3; color: #0a5f1f; }
+  .zm-line-noop { background: #fafafa; color: #555; }
+  .zm-line ins { background: #b6ecc2; text-decoration: none; padding: 0 2px; border-radius: 2px; font-weight: 500; }
+  .zm-line del { background: #ffc6c6; text-decoration: line-through; padding: 0 2px; border-radius: 2px; }
+
+  /* Per-record proxy toggle. Shown inside the card body for any A/AAAA/CNAME
+     record (no matter its diff status). Clicking it flips the proxied flag
+     and turns the card into an override push — the card visually transitions
+     from "No change" to a yellow Update with a pending mark. */
+  .zm-actions { margin-top: 0.5rem; display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+  .zm-toggle-proxy {
+    appearance: none; -webkit-appearance: none; -moz-appearance: none;
+    background: #fff; border: 1px solid #d4d4d4; border-radius: 999px;
+    padding: 0.25rem 0.7rem; font-size: 0.82em; color: #555;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem;
+    font-family: inherit;
+  }
+  .zm-toggle-proxy:hover { background: #f5f5f5; border-color: #b4b4b4; }
+  .zm-toggle-proxy[data-state="1"] { color: #b35900; border-color: #f4ad6a; background: #fff7ec; }
+  .zm-toggle-proxy[data-state="1"]:hover { background: #ffeede; }
+  .zm-toggle-proxy .zm-toggle-cloud { color: #aaa; line-height: 0; }
+  .zm-toggle-proxy[data-state="1"] .zm-toggle-cloud { color: #f48120; }
+  .zm-toggle-proxy[data-overridden="1"] {
+    border-color: #d9a700; background: #fff8e1; color: #6e5300;
+    box-shadow: 0 0 0 2px rgba(217,167,0,0.18);
+  }
+  .zm-override-hint {
+    font-size: 0.78em; color: #b35900; font-style: italic;
+    display: none;
+  }
+  .zm-card[data-pending-override="1"] .zm-override-hint { display: inline; }
+  .zm-card[data-pending-override="1"] { border-left-color: #d9a700 !important; opacity: 1 !important; }
+  .zm-meta {
+    font-size: 0.82em; color: #666; margin-top: 0.5rem;
+    padding: 0.25rem 0.5rem;
+  }
+  .zm-meta strong { color: #333; font-weight: 600; }
+  .zm-meta .arrow { color: #888; padding: 0 0.3rem; }
+  .zm-meta .v-old { color: #842029; }
+  .zm-meta .v-new { color: #0a5f1f; }
+
+  /* CF-only delete cards get an explicit warning banner above the - line */
+  .zm-warn {
+    font-size: 0.85em; color: #842029; background: #fff5f5;
+    border: 1px solid #f5c6c6; border-radius: 4px;
+    padding: 0.5rem 0.7rem; margin-bottom: 0.5rem; line-height: 1.4;
+  }
+  .zm-warn strong { color: #842029; }
+
+  /* Cloudflare-style cloud icon — orange = proxied, grey = DNS-only. The
+     SVG is inlined as text by zm_cloud_swap() so the icon survives the
+     LCS-based word diff (which would corrupt embedded HTML). */
+  .zm-cloud {
+    display: inline-block; vertical-align: -2px; margin-left: 0.35rem;
+    line-height: 1; cursor: help;
+  }
+  .zm-cloud svg { display: block; }
+  .zm-cloud-proxied { color: #f48120; }   /* Cloudflare orange */
+  .zm-cloud-dnsonly { color: #aaa; }      /* muted grey */
+
+  /* compact list for already-matching records — uniform mini-rows */
+  details.zm-identical { margin-top: 1rem; border: 1px solid #eee; border-radius: 6px; }
+  details.zm-identical > summary {
+    padding: 0.6rem 0.85rem; cursor: pointer; color: #666; background: #fafafa;
+    list-style: none;
+  }
+  details.zm-identical > summary::-webkit-details-marker { display: none; }
+  details.zm-identical > summary::before { content: "▶ "; font-size: 0.75em; color: #aaa; }
+  details.zm-identical[open] > summary::before { content: "▼ "; }
+  .zm-noop-list { display: flex; flex-direction: column; }
+  .zm-noop-row {
+    display: flex; gap: 0.75rem; align-items: baseline;
+    padding: 0.4rem 0.85rem; border-top: 1px solid #f0f0f0;
+    font-size: 0.86em; color: #777;
+  }
+  .zm-noop-row:first-child { border-top: 0; }
+  .zm-noop-row .t {
+    font-weight: 600; color: #555; min-width: 52px;
+    font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .zm-noop-row .n {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #555; word-break: break-all; min-width: 30%; max-width: 40%;
+  }
+  .zm-noop-row .v {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: #999; word-break: break-all; flex: 1;
+  }
+
+  /* sticky apply bar */
+  .zm-sticky {
+    position: sticky; bottom: 0;
+    background: #fff; border-top: 2px solid #1f5fa6;
+    padding: 0.7rem 0.85rem; margin: 1rem 0 0;
+    display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
+    z-index: 10; flex-wrap: wrap; gap: 0.5rem;
+  }
+  .zm-sticky .info { color: #444; font-size: 0.95em; }
+  .zm-sticky #zm-selected-count { font-weight: 700; color: #1f5fa6; font-size: 1.15em; }
+  .zm-sticky .actions { display: flex; gap: 0.5rem; align-items: center; }
+  .zm-sticky button[disabled] { opacity: 0.5; cursor: not-allowed; }
+  details.zm-bulk { position: relative; }
+  details.zm-bulk > summary {
+    list-style: none; cursor: pointer;
+  }
+  details.zm-bulk > summary::-webkit-details-marker { display: none; }
+  details.zm-bulk[open] .zm-bulk-menu {
+    position: absolute; right: 0; bottom: 100%;
+    background: #fff; border: 1px solid #d4d4d4; border-radius: 6px;
+    padding: 0.5rem; min-width: 300px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.4rem;
+  }
+  .zm-bulk-menu button { text-align: left; }
 
   /* wizard heading */
   .zm-step { color: #888; font-size: 0.8em; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 0.25rem; }
 
-  details.advanced { margin-top: 2rem; padding: 0.75rem 0; border-top: 1px solid #eee; }
-  details.advanced > summary { cursor: pointer; color: #555; padding: 0.4rem 0; }
+  /* "Use my own Cloudflare account" — the card boxes the whole disclosure
+     so it visually matches the other sections (banner, domain list) instead
+     of floating as a bare link under the page. */
+  details.advanced {
+    margin-top: 1.5rem;
+    background: #fff; border: 1px solid #e5e5e5; border-radius: 6px;
+    padding: 0;
+  }
+  details.advanced > summary {
+    cursor: pointer; color: #444; font-weight: 500;
+    padding: 0.85rem 1rem;
+    list-style: none; user-select: none;
+    display: flex; align-items: center; gap: 0.5rem;
+    border-radius: 6px;
+  }
+  details.advanced[open] > summary {
+    border-bottom: 1px solid #eee; border-radius: 6px 6px 0 0;
+  }
+  details.advanced > summary::-webkit-details-marker { display: none; }
+  details.advanced > summary::before { content: "▶"; font-size: 0.7em; color: #888; }
+  details.advanced[open] > summary::before { content: "▼"; }
+  details.advanced > summary:hover { background: #fafafa; }
+  details.advanced > .adv-body { padding: 0.5rem 1rem 1rem; }
   .form-stack label { display: block; margin: 0.75rem 0 0.25rem; font-weight: 500; }
-  .form-stack input { width: 100%; padding: 0.5rem 0.6rem; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+  /* Only text-shaped fields stretch to full width. Checkboxes and radios
+     stay at their intrinsic size so the label text sits next to the box. */
+  .form-stack input[type=text],
+  .form-stack input[type=password],
+  .form-stack input[type=email],
+  .form-stack input[type=number],
+  .form-stack select,
+  .form-stack textarea {
+    width: 100%; padding: 0.5rem 0.6rem;
+    border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;
+    font-size: 1em;
+  }
+  .form-stack label.inline {
+    display: flex; align-items: center; gap: 0.5rem;
+    font-weight: 400; margin: 0.6rem 0 0;
+  }
+  .form-stack label.inline input[type=checkbox] { margin: 0; flex: 0 0 auto; }
 </style>
 
 <div class="body-content zonemirror-wrap">
@@ -245,133 +420,258 @@ if ($autoRefresh) {
   <?php elseif ($vm['enabled'] && $vm['sync_state'] === UserConfigStorage::STATE_AWAITING_REVIEW && is_array($vm['diff'])): ?>
 
     <?php
-    $summary = is_array($vm['diff']['summary'] ?? null) ? $vm['diff']['summary'] : [];
     $entries = is_array($vm['diff']['entries'] ?? null) ? $vm['diff']['entries'] : [];
     $computedAt = isset($vm['diff']['computed_at']) ? (int) $vm['diff']['computed_at'] : 0;
+
+    // Bucket by status so the page can render one section per action
+    // (creates, updates, deletes), keep "no change" rows collapsed in a
+    // separate disclosure, and feed live counts to the sticky footer.
+    $byStatus = [
+        DnsDiff::STATUS_DIFFERENT => [],
+        DnsDiff::STATUS_CPANEL_ONLY => [],
+        DnsDiff::STATUS_CLOUDFLARE_ONLY => [],
+        DnsDiff::STATUS_IDENTICAL => [],
+    ];
+    foreach ($entries as $e) {
+        if (!is_array($e)) {
+            continue;
+        }
+        $s = (string) ($e['status'] ?? '');
+        if (isset($byStatus[$s])) {
+            $byStatus[$s][] = $e;
+        }
+    }
+    $cCreate = count($byStatus[DnsDiff::STATUS_CPANEL_ONLY]);
+    $cUpdate = count($byStatus[DnsDiff::STATUS_DIFFERENT]);
+    $cDelete = count($byStatus[DnsDiff::STATUS_CLOUDFLARE_ONLY]);
+    $cIdent  = count($byStatus[DnsDiff::STATUS_IDENTICAL]);
     ?>
 
     <div class="zm-step">Step 2 of 2 — Review</div>
-    <h3 style="margin-top: 0.2rem;">What&rsquo;s different on Cloudflare</h3>
+    <h3 style="margin-top: 0.2rem;">Review changes before syncing</h3>
     <p style="color:#666;">
-      Pick exactly which changes to apply. Nothing is pushed to Cloudflare
-      until you click <strong>Apply</strong>.
+      Each card shows what will happen on Cloudflare if you apply it.
+      Nothing is pushed until you tick the box and confirm.
       <?php if ($computedAt > 0): ?>
         <span style="color:#aaa;">&nbsp;Computed <?= $h(gmdate('Y-m-d H:i \U\T\C', $computedAt)) ?>.</span>
       <?php endif; ?>
     </p>
 
     <div class="zm-summary">
-      <div class="card">
-        <div class="label">Identical</div>
-        <div class="value"><?= (int) ($summary[DnsDiff::STATUS_IDENTICAL] ?? 0) ?></div>
+      <div class="card miss-l">
+        <div class="label">Create</div>
+        <div class="value"><?= $cCreate ?></div>
       </div>
       <div class="card diff">
-        <div class="label">Different</div>
-        <div class="value"><?= (int) ($summary[DnsDiff::STATUS_DIFFERENT] ?? 0) ?></div>
-      </div>
-      <div class="card miss-l">
-        <div class="label">Only in cPanel</div>
-        <div class="value"><?= (int) ($summary[DnsDiff::STATUS_CPANEL_ONLY] ?? 0) ?></div>
+        <div class="label">Update</div>
+        <div class="value"><?= $cUpdate ?></div>
       </div>
       <div class="card miss-r">
-        <div class="label">Only on Cloudflare</div>
-        <div class="value"><?= (int) ($summary[DnsDiff::STATUS_CLOUDFLARE_ONLY] ?? 0) ?></div>
+        <div class="label">Delete</div>
+        <div class="value"><?= $cDelete ?></div>
       </div>
+      <div class="card">
+        <div class="label">No change</div>
+        <div class="value"><?= $cIdent ?></div>
+      </div>
+    </div>
+
+    <div class="zm-filter" role="tablist">
+      <button type="button" class="active" data-filter="actionable">Actionable (<?= $cCreate + $cUpdate + $cDelete ?>)</button>
+      <button type="button" data-filter="cpanel_only">Create (<?= $cCreate ?>)</button>
+      <button type="button" data-filter="different">Update (<?= $cUpdate ?>)</button>
+      <button type="button" data-filter="cloudflare_only">Delete (<?= $cDelete ?>)</button>
+      <button type="button" data-filter="identical">No change (<?= $cIdent ?>)</button>
+      <button type="button" data-filter="all">All</button>
     </div>
 
     <form method="post" id="zm-diff-form">
       <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
       <input type="hidden" name="action" value="apply">
 
-      <div class="zm-actions-bar">
-        <button type="submit" class="btn btn-primary">Apply selected</button>
-        <small>or in bulk:</small>
-        <button type="submit" name="apply_status" value="different" class="btn btn-default">
-          Push all <em>different</em>
-        </button>
-        <button type="submit" name="apply_status" value="cpanel_only" class="btn btn-default">
-          Create all <em>missing in CF</em>
-        </button>
-        <button type="submit" name="apply_status" value="cloudflare_only" class="btn btn-default"
-                onclick="return confirm('Delete every Cloudflare-only record this domain has? They will be removed from Cloudflare. cPanel is not affected.');">
-          Delete all <em>CF-only</em>
-        </button>
-        <span class="spacer"></span>
-        <button type="submit" name="apply_status" value="all" class="btn btn-default"
-                onclick="return confirm('Push every difference and every missing record from cPanel to Cloudflare? (CF-only records are NOT deleted in this action.)');">
-          Apply everything from cPanel
-        </button>
+      <div class="zm-cards">
+        <?php
+        // Order actionable rows: updates first, then creates, then deletes —
+        // matches the visual weight of each action (yellow → green → red).
+        foreach ([DnsDiff::STATUS_DIFFERENT, DnsDiff::STATUS_CPANEL_ONLY, DnsDiff::STATUS_CLOUDFLARE_ONLY] as $st) {
+            foreach ($byStatus[$st] as $e) {
+                echo zm_render_card($e, $h);
+            }
+        }
+        ?>
       </div>
 
-      <table class="zm-diff">
-        <colgroup>
-          <col class="c-check">
-          <col class="c-status">
-          <col class="c-type">
-          <col class="c-name">
-          <col>
-          <col>
-          <col class="c-action">
-        </colgroup>
-        <thead>
-          <tr>
-            <th>&nbsp;</th>
-            <th>Status</th>
-            <th>Type</th>
-            <th>Name</th>
-            <th>cPanel</th>
-            <th>Cloudflare</th>
-            <th>Will do</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($entries as $e): if (!is_array($e)) continue;
-            $status = (string) ($e['status'] ?? '');
-            $key = (string) ($e['key'] ?? '');
-            $type = (string) ($e['type'] ?? '');
-            $name = (string) ($e['name'] ?? '');
-            $localTxt = zm_format_record($e['local'] ?? null);
-            $remoteTxt = zm_format_record($e['remote'] ?? null);
-            $checkboxName = $status === DnsDiff::STATUS_CLOUDFLARE_ONLY ? 'delete_keys[]' : 'push_keys[]';
-            $defaultChecked = false; // user decides — never pre-tick
-          ?>
-            <tr class="<?= $h($status) ?>">
-              <td>
-                <?php if ($status !== DnsDiff::STATUS_IDENTICAL): ?>
-                  <input type="checkbox" name="<?= $h($checkboxName) ?>" value="<?= $h($key) ?>" <?= $defaultChecked ? 'checked' : '' ?>>
-                <?php endif; ?>
-              </td>
-              <td>
-                <?php if ($status === DnsDiff::STATUS_IDENTICAL): ?>
-                  <span class="zm-pill ok">match</span>
-                <?php elseif ($status === DnsDiff::STATUS_DIFFERENT): ?>
-                  <span class="zm-pill warn">diff</span>
-                <?php elseif ($status === DnsDiff::STATUS_CPANEL_ONLY): ?>
-                  <span class="zm-pill avail">cPanel only</span>
-                <?php else: ?>
-                  <span class="zm-pill danger">CF only</span>
-                <?php endif; ?>
-              </td>
-              <td><strong><?= $h($type) ?></strong></td>
-              <td class="name"><?= $h($name) ?></td>
-              <td class="val cp"><?= $h($localTxt) ?></td>
-              <td class="val cf"><?= $h($remoteTxt) ?></td>
-              <td class="action">
-                <?php if ($status === DnsDiff::STATUS_IDENTICAL): ?>
-                  <span class="zm-pill noop">No-op</span>
-                <?php elseif ($status === DnsDiff::STATUS_DIFFERENT): ?>
-                  <span class="zm-pill replace">Replace on CF</span>
-                <?php elseif ($status === DnsDiff::STATUS_CPANEL_ONLY): ?>
-                  <span class="zm-pill create">Create on CF</span>
-                <?php else: ?>
-                  <span class="zm-pill delete">Delete from CF</span>
-                <?php endif; ?>
-              </td>
-            </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table>
+      <?php if ($cIdent > 0): ?>
+        <details class="zm-identical" id="zm-identical">
+          <summary><?= $cIdent ?> records already match Cloudflare</summary>
+          <div class="zm-cards" style="padding: 0.6rem 0.85rem 0.85rem;">
+            <?php foreach ($byStatus[DnsDiff::STATUS_IDENTICAL] as $e): ?>
+              <?= zm_render_card($e, $h) ?>
+            <?php endforeach; ?>
+          </div>
+        </details>
+      <?php endif; ?>
+
+      <div class="zm-sticky">
+        <div class="info">
+          <span id="zm-selected-count">0</span> change(s) selected
+        </div>
+        <div class="actions">
+          <button type="submit" id="zm-apply-btn" class="btn btn-primary" disabled>
+            Apply selected changes
+          </button>
+          <details class="zm-bulk">
+            <summary class="btn btn-default">Apply all&hellip;</summary>
+            <div class="zm-bulk-menu">
+              <?php if ($cCreate > 0): ?>
+                <button type="submit" name="apply_status" value="cpanel_only" class="btn btn-default"
+                        onclick="return confirm('Create <?= $cCreate ?> record(s) on Cloudflare that exist on cPanel?');">
+                  Create all <?= $cCreate ?> missing on CF
+                </button>
+              <?php endif; ?>
+              <?php if ($cUpdate > 0): ?>
+                <button type="submit" name="apply_status" value="different" class="btn btn-default"
+                        onclick="return confirm('Overwrite <?= $cUpdate ?> Cloudflare record(s) with the cPanel version?');">
+                  Update all <?= $cUpdate ?> differing
+                </button>
+              <?php endif; ?>
+              <?php if ($cDelete > 0): ?>
+                <button type="submit" name="apply_status" value="cloudflare_only" class="btn btn-default"
+                        onclick="return confirm('DELETE <?= $cDelete ?> record(s) from Cloudflare that do not exist on cPanel? This is destructive.');">
+                  Delete all <?= $cDelete ?> CF-only
+                </button>
+              <?php endif; ?>
+              <?php if ($cCreate + $cUpdate > 0): ?>
+                <button type="submit" name="apply_status" value="all" class="btn btn-default"
+                        onclick="return confirm('Push every create + update from cPanel to Cloudflare? (CF-only records are NOT deleted.)');">
+                  Apply all creates + updates
+                </button>
+              <?php endif; ?>
+            </div>
+          </details>
+        </div>
+      </div>
     </form>
+
+    <script>
+    (function() {
+      var form     = document.getElementById('zm-diff-form');
+      var counter  = document.getElementById('zm-selected-count');
+      var applyBtn = document.getElementById('zm-apply-btn');
+
+      function selected() {
+        return form.querySelectorAll(
+          'input[name="push_keys[]"]:checked, input[name="delete_keys[]"]:checked'
+        );
+      }
+      function refresh() {
+        var n = selected().length;
+        counter.textContent = n;
+        applyBtn.disabled = n === 0;
+      }
+      form.addEventListener('change', refresh);
+      refresh();
+
+      // Confirm individual-apply submits; bulk buttons already have their
+      // own onclick confirms so we skip those.
+      form.addEventListener('submit', function(e) {
+        if (e.submitter && e.submitter.name === 'apply_status') {
+          return;
+        }
+        var n = selected().length;
+        if (n === 0) {
+          e.preventDefault();
+          return;
+        }
+        var pushes  = form.querySelectorAll('input[name="push_keys[]"]:checked').length;
+        var deletes = form.querySelectorAll('input[name="delete_keys[]"]:checked').length;
+        var parts = [];
+        if (pushes)  { parts.push(pushes  + ' push' + (pushes  === 1 ? '' : 'es')); }
+        if (deletes) { parts.push(deletes + ' delete' + (deletes === 1 ? '' : 's')); }
+        if (!confirm('Apply ' + parts.join(' and ') + ' on Cloudflare?')) {
+          e.preventDefault();
+        }
+      });
+
+      // Filter chips. "actionable" hides identical, "identical" hides the
+      // rest. Identical rows live in a <details> disclosure rather than as
+      // cards, so we toggle that too.
+      var chips = document.querySelectorAll('.zm-filter button');
+      var identBlock = document.getElementById('zm-identical');
+      function applyFilter(f) {
+        chips.forEach(function(x) {
+          x.classList.toggle('active', x.dataset.filter === f);
+        });
+        document.querySelectorAll('.zm-card').forEach(function(card) {
+          var s = card.dataset.status;
+          var show =
+            (f === 'all') ||
+            (f === 'actionable' && s !== 'identical') ||
+            (f === s);
+          card.style.display = show ? '' : 'none';
+        });
+        if (identBlock) {
+          identBlock.style.display = (f === 'all' || f === 'identical') ? '' : 'none';
+        }
+      }
+      chips.forEach(function(b) {
+        b.addEventListener('click', function() { applyFilter(b.dataset.filter); });
+      });
+      applyFilter('actionable');
+
+      // Per-record proxy toggle. The button's data-state holds the
+      // currently-displayed proxied flag (0/1); data-original is what came
+      // from the diff. When they diverge, we mark the card as override-
+      // pending: the hidden proxy_override[KEY] field gets the new value,
+      // the push checkbox is force-ticked, and the card itself flips to
+      // a yellow Update-ish look so the user knows it'll be pushed.
+      document.querySelectorAll('.zm-toggle-proxy').forEach(function(btn) {
+        var key = btn.dataset.key;
+        var card = btn.closest('.zm-card');
+        var hidden = card.querySelector('input[name="proxy_override[' + CSS.escape(key) + ']"]');
+        var pushCb = card.querySelector('input[name="push_keys[]"]');
+        var label  = btn.querySelector('.zm-toggle-label');
+        var cloud  = btn.querySelector('.zm-toggle-cloud');
+
+        // Pre-rendered SVGs we swap into the cloud span on toggle. Keep
+        // them in sync with zm_cloud_swap() so they look identical.
+        var SVG_ON  = '<span class="zm-cloud zm-cloud-proxied" title="Proxied through Cloudflare">'
+                    + cloud.innerHTML.replace(/zm-cloud-(proxied|dnsonly)/, 'zm-cloud-proxied') + '</span>';
+        var SVG_OFF = '<span class="zm-cloud zm-cloud-dnsonly" title="DNS only — not proxied">'
+                    + cloud.innerHTML.replace(/zm-cloud-(proxied|dnsonly)/, 'zm-cloud-dnsonly') + '</span>';
+
+        btn.addEventListener('click', function() {
+          var next = btn.dataset.state === '1' ? '0' : '1';
+          btn.dataset.state = next;
+          label.textContent = next === '1' ? 'Proxied' : 'DNS only';
+          cloud.outerHTML = next === '1'
+            ? '<span class="zm-toggle-cloud">' + SVG_ON  + '</span>'
+            : '<span class="zm-toggle-cloud">' + SVG_OFF + '</span>';
+          // Re-query the cloud node since outerHTML replaced it.
+          cloud = btn.querySelector('.zm-toggle-cloud');
+
+          var overridden = next !== btn.dataset.original;
+          btn.dataset.overridden = overridden ? '1' : '0';
+          card.dataset.pendingOverride = overridden ? '1' : '0';
+          if (hidden) { hidden.value = overridden ? next : ''; }
+          if (pushCb) {
+            pushCb.checked = overridden ? true : pushCb.dataset.userChecked === '1';
+            // Track user-initiated checkbox state so toggling back to the
+            // original doesn't un-tick a row the user explicitly selected.
+          }
+          refresh();
+        });
+      });
+      // Remember any push checkbox the user ticks manually so the
+      // override-toggle doesn't accidentally undo it on return-to-original.
+      form.querySelectorAll('input[name="push_keys[]"]').forEach(function(cb) {
+        cb.addEventListener('change', function() {
+          if (cb.checked) cb.dataset.userChecked = '1';
+          else if (cb.dataset.userChecked === '1') cb.dataset.userChecked = '0';
+        });
+      });
+    })();
+    </script>
 
   <?php elseif ($vm['enabled'] && $vm['sync_state'] === UserConfigStorage::STATE_IDLE): ?>
 
@@ -436,7 +736,8 @@ if ($autoRefresh) {
   <?php /* ─── Advanced (user-pasted token, optional) ─── */ ?>
   <details class="advanced">
     <summary>Use my own Cloudflare account</summary>
-    <p style="margin-top: 1rem; color: #555;">
+    <div class="adv-body">
+    <p style="margin: 0 0 0.6rem; color: #555;">
       If your domain isn&rsquo;t covered by your hosting provider&rsquo;s Cloudflare
       account, you can connect your own Cloudflare token instead.
     </p>
@@ -448,21 +749,29 @@ if ($autoRefresh) {
                placeholder="<?= $vm['token_set'] ? '••••••••' : 'cf-XXXX...' ?>">
       </label>
       <label>Zone (domain)
-        <input type="text" name="zone_name" value="<?= $h($vm['zone_name']) ?>" placeholder="example.com">
+        <select name="zone_name">
+          <option value="">— select one of your domains —</option>
+          <?php foreach ($vm['domains'] as $d): ?>
+            <option value="<?= $h($d['name']) ?>" <?= $vm['zone_name'] === $d['name'] ? 'selected' : '' ?>>
+              <?= $h($d['name']) ?>
+            </option>
+          <?php endforeach; ?>
+        </select>
       </label>
-      <label style="display: block; margin-top: 0.5rem;">
+      <label class="inline">
         <input type="checkbox" name="defaults_proxied" <?= $vm['defaults_proxied'] ? 'checked' : '' ?>>
-        Proxy A / AAAA / CNAME records by default
+        <span>Proxy A / AAAA / CNAME records by default</span>
       </label>
-      <label>
+      <label class="inline">
         <input type="checkbox" name="enabled" <?= ($vm['enabled'] && $vm['source'] === 'user') ? 'checked' : '' ?>>
-        Enable real-time sync to Cloudflare
+        <span>Enable real-time sync to Cloudflare</span>
       </label>
       <div style="margin-top: 0.75rem;">
         <button type="submit" name="action" value="test" class="btn btn-default" formnovalidate>Test connection</button>
         <button type="submit" class="btn btn-primary">Save</button>
       </div>
     </form>
+    </div>
   </details>
 </div>
 
@@ -472,6 +781,380 @@ $cpanel->end();
 
 
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Render a single diff card. Picks the layout based on status:
+ *   - cpanel_only   → single + line in green ("Create on Cloudflare")
+ *   - cloudflare_only → single - line in red ("Delete from Cloudflare")
+ *   - different     → two stacked lines with inline word-level highlighting
+ *                     of the changed tokens, plus a field-level meta line
+ *                     summarising TTL/proxied/priority/etc. changes
+ *
+ * The output is a full <div class="zm-card"> ready to be inserted into the
+ * cards container. All untrusted strings go through $h() before printing.
+ *
+ * @param array<string, mixed> $e Diff entry from the persisted diff.json.
+ */
+function zm_render_card(array $e, callable $h): string
+{
+    $status = (string) ($e['status'] ?? '');
+    $key    = (string) ($e['key'] ?? '');
+    $type   = (string) ($e['type'] ?? '');
+    $name   = (string) ($e['name'] ?? '');
+    $local  = is_array($e['local']  ?? null) ? $e['local']  : null;
+    $remote = is_array($e['remote'] ?? null) ? $e['remote'] : null;
+
+    [$labelText, $labelClass] = match ($status) {
+        DnsDiff::STATUS_DIFFERENT       => ['Update', 'replace'],
+        DnsDiff::STATUS_CPANEL_ONLY     => ['Create', 'create'],
+        DnsDiff::STATUS_CLOUDFLARE_ONLY => ['Delete', 'delete'],
+        default                          => ['No change', 'noop'],
+    };
+    $checkboxName = $status === DnsDiff::STATUS_CLOUDFLARE_ONLY ? 'delete_keys[]' : 'push_keys[]';
+
+    if ($status === DnsDiff::STATUS_DIFFERENT && $local !== null && $remote !== null) {
+        $body = zm_render_update_body($local, $remote, $h);
+    } elseif ($status === DnsDiff::STATUS_CPANEL_ONLY && $local !== null) {
+        $body = zm_render_create_body($local, $h);
+    } elseif ($status === DnsDiff::STATUS_CLOUDFLARE_ONLY && $remote !== null) {
+        $body = zm_render_delete_body($remote, $h);
+    } elseif ($status === DnsDiff::STATUS_IDENTICAL && $local !== null) {
+        $body = zm_render_noop_body($local, $h);
+    } else {
+        $body = '';
+    }
+
+    // Proxy override row — only for A/AAAA/CNAME records (the rrtypes
+    // Cloudflare can actually proxy) and never on delete cards (the
+    // record is going away). On identical cards the toggle is the only
+    // way to interact with the row, which is the whole point of showing
+    // them in the same card layout.
+    $proxySource = $local ?? $remote;
+    $upperType   = strtoupper($type);
+    $canProxy    = in_array($upperType, ['A', 'AAAA', 'CNAME'], true)
+        && $status !== DnsDiff::STATUS_CLOUDFLARE_ONLY
+        && is_array($proxySource)
+        && array_key_exists('proxied', $proxySource)
+        && $proxySource['proxied'] !== null;
+    $actions = '';
+    if ($canProxy) {
+        $currentlyProxied = (bool) $proxySource['proxied'];
+        $actions = sprintf(
+            '<div class="zm-actions">'
+            . '<button type="button" class="zm-toggle-proxy" data-key="%s" data-state="%s" data-original="%s" title="Click to toggle proxy">'
+            . '<span class="zm-toggle-cloud">%s</span><span class="zm-toggle-label">%s</span>'
+            . '</button>'
+            . '<input type="hidden" name="proxy_override[%s]" value="" data-key="%s">'
+            . '<span class="zm-override-hint">override pending — will be pushed</span>'
+            . '</div>',
+            $h($key),
+            $currentlyProxied ? '1' : '0',
+            $currentlyProxied ? '1' : '0',
+            zm_cloud_swap($currentlyProxied ? ZM_PROXIED_MARK : ZM_DNSONLY_MARK),
+            $currentlyProxied ? 'Proxied' : 'DNS only',
+            $h($key),
+            $h($key),
+        );
+    }
+
+    $checkbox = sprintf(
+        '<input type="checkbox" name="%s" value="%s"%s>',
+        $h($checkboxName),
+        $h($key),
+        $status === DnsDiff::STATUS_IDENTICAL ? ' style="visibility:hidden"' : '',
+    );
+
+    return sprintf(
+        '<div class="zm-card status-%s" data-status="%s" data-key="%s">'
+        . '<label class="zm-card-head">%s'
+        . '<span class="zm-pill %s">%s</span>'
+        . '<span class="zm-rtype">%s</span>'
+        . '<span class="zm-rname">%s</span>'
+        . '</label>'
+        . '<div class="zm-card-body">%s%s</div>'
+        . '</div>',
+        $h($status),
+        $h($status),
+        $h($key),
+        $checkbox,
+        $h($labelClass),
+        $h($labelText),
+        $h($type),
+        $h($name),
+        $body,
+        $actions,
+    );
+}
+
+/**
+ * Body for an identical card. Just the matching content, no diff lines.
+ * Renders the same shape as create/delete bodies so the layout stays
+ * consistent when the user expands the "already match" disclosure.
+ *
+ * @param array<string, mixed> $local
+ */
+function zm_render_noop_body(array $local, callable $h): string
+{
+    $txt = zm_format_record($local);
+    return '<div class="zm-line zm-line-noop">' . zm_cloud_swap($h($txt)) . '</div>';
+}
+
+/**
+ * Stacked "- old / + new" lines with per-field meta. Inline word-level
+ * highlighting on the content row makes the actual change pop (especially
+ * useful for SPF strings where a single mechanism may be added in the
+ * middle, or DMARC where the rua/ruf chunk is appended).
+ *
+ * @param array<string, mixed> $local
+ * @param array<string, mixed> $remote
+ */
+function zm_render_update_body(array $local, array $remote, callable $h): string
+{
+    $localTxt  = zm_format_record($local);
+    $remoteTxt = zm_format_record($remote);
+
+    $inline = zm_inline_diff($remoteTxt, $localTxt, $h);
+
+    $out  = '<div class="zm-line zm-line-del">- ' . zm_cloud_swap($inline['before']) . '</div>';
+    $out .= '<div class="zm-line zm-line-add">+ ' . zm_cloud_swap($inline['after'])  . '</div>';
+
+    // Field-level annotations for everything that isn't the main content
+    // line — TTL, proxied, priority, structured data. The user usually
+    // skim-reads this strip to confirm "yes, just the TTL changed".
+    $changes = zm_field_changes($local, $remote);
+    unset($changes['content']); // already visualised inline above
+    $bits = [];
+    foreach ($changes as $field => $bf) {
+        $bits[] = sprintf(
+            '<strong>%s</strong>: <span class="v-old">%s</span><span class="arrow">→</span><span class="v-new">%s</span>',
+            $h($field),
+            $h(zm_fmt_field_value($field, $bf['before'])),
+            $h(zm_fmt_field_value($field, $bf['after'])),
+        );
+    }
+    if ($bits !== []) {
+        $out .= '<div class="zm-meta">' . zm_cloud_swap(implode(' &nbsp;·&nbsp; ', $bits)) . '</div>';
+    }
+
+    return $out;
+}
+
+/**
+ * @param array<string, mixed> $local
+ */
+function zm_render_create_body(array $local, callable $h): string
+{
+    $txt = zm_format_record($local);
+    $ttl = isset($local['ttl']) ? (int) $local['ttl'] : 0;
+    $out = '<div class="zm-line zm-line-add">+ ' . zm_cloud_swap($h($txt)) . '</div>';
+    if ($ttl > 0) {
+        $out .= '<div class="zm-meta"><strong>TTL</strong>: ' . $h(zm_fmt_ttl($ttl)) . '</div>';
+    }
+
+    return $out;
+}
+
+/**
+ * @param array<string, mixed> $remote
+ */
+function zm_render_delete_body(array $remote, callable $h): string
+{
+    $txt = zm_format_record($remote);
+    $ttl = isset($remote['ttl']) ? (int) $remote['ttl'] : 0;
+    // Delete rows are the only destructive action in the diff. Make the
+    // intent loud: a banner above the - line says what the user is doing
+    // and where the record came from (it wasn't in cPanel, so it must
+    // have been created directly in the Cloudflare dashboard at some
+    // point — exactly the sort of change a user wants to double-check
+    // before nuking it).
+    $out  = '<div class="zm-warn">'
+        . 'This record exists on <strong>Cloudflare only</strong> — it&rsquo;s not in your cPanel zone. '
+        . 'It was likely added by hand in the Cloudflare dashboard. Ticking the box will remove it.'
+        . '</div>';
+    $out .= '<div class="zm-line zm-line-del">- ' . zm_cloud_swap($h($txt)) . '</div>';
+    if ($ttl > 0) {
+        $out .= '<div class="zm-meta"><strong>TTL</strong>: ' . $h(zm_fmt_ttl($ttl)) . '</div>';
+    }
+
+    return $out;
+}
+
+/**
+ * Word-level diff of two strings. Tokens are split on whitespace (keeping
+ * the whitespace as its own token so we can faithfully reconstruct the
+ * line). Renders the result twice: a "before" string with deletions wrapped
+ * in <del> and a corresponding "after" with insertions wrapped in <ins>;
+ * equal tokens appear plain in both.
+ *
+ * For very long strings (m*n > 100k) we fall back to a coarse whole-string
+ * mark — the LCS table would blow memory and the user can't read it
+ * anyway. SPF/DMARC sizes are tiny so this never trips in practice.
+ *
+ * @return array{before: string, after: string}
+ */
+function zm_inline_diff(string $before, string $after, callable $h): array
+{
+    if ($before === $after) {
+        $esc = $h($before);
+
+        return ['before' => $esc, 'after' => $esc];
+    }
+    $a = $before === '' ? [] : (preg_split('/(\s+)/', $before, -1, PREG_SPLIT_DELIM_CAPTURE) ?: []);
+    $b = $after  === '' ? [] : (preg_split('/(\s+)/', $after,  -1, PREG_SPLIT_DELIM_CAPTURE) ?: []);
+    $m = count($a);
+    $n = count($b);
+
+    if ($m * $n > 100000) {
+        return [
+            'before' => '<del>' . $h($before) . '</del>',
+            'after'  => '<ins>' . $h($after)  . '</ins>',
+        ];
+    }
+
+    $dp = array_fill(0, $m + 1, array_fill(0, $n + 1, 0));
+    for ($i = 1; $i <= $m; $i++) {
+        for ($j = 1; $j <= $n; $j++) {
+            if ($a[$i - 1] === $b[$j - 1]) {
+                $dp[$i][$j] = $dp[$i - 1][$j - 1] + 1;
+            } else {
+                $dp[$i][$j] = max($dp[$i - 1][$j], $dp[$i][$j - 1]);
+            }
+        }
+    }
+
+    $ops = [];
+    $i = $m;
+    $j = $n;
+    while ($i > 0 || $j > 0) {
+        if ($i > 0 && $j > 0 && $a[$i - 1] === $b[$j - 1]) {
+            $ops[] = ['eq', $a[$i - 1]];
+            $i--;
+            $j--;
+        } elseif ($j > 0 && ($i === 0 || $dp[$i][$j - 1] >= $dp[$i - 1][$j])) {
+            $ops[] = ['add', $b[$j - 1]];
+            $j--;
+        } else {
+            $ops[] = ['del', $a[$i - 1]];
+            $i--;
+        }
+    }
+    $ops = array_reverse($ops);
+
+    $beforeHtml = '';
+    $afterHtml  = '';
+    foreach ($ops as $op) {
+        $esc = $h($op[1]);
+        if ($op[0] === 'eq') {
+            $beforeHtml .= $esc;
+            $afterHtml  .= $esc;
+        } elseif ($op[0] === 'del') {
+            $beforeHtml .= '<del>' . $esc . '</del>';
+        } else { // add
+            $afterHtml .= '<ins>' . $esc . '</ins>';
+        }
+    }
+
+    return ['before' => $beforeHtml, 'after' => $afterHtml];
+}
+
+/**
+ * Per-field diff between a cPanel record and the Cloudflare row. Returns
+ * a map of changed-field-name → {before, after}. Excludes equal fields
+ * entirely so the caller only iterates over what actually moved.
+ *
+ * Mirrors ComputeDiff::recordsMatch() in what counts as "different":
+ *   - content (skipped for SRV/CAA which use `data` instead)
+ *   - ttl (informational — ComputeDiff intentionally ignores TTL for
+ *          equality, but we still surface it to the operator)
+ *   - proxied
+ *   - priority (mostly MX)
+ *   - data.priority / data.weight / data.port / data.target (SRV)
+ *   - data.flags / data.tag / data.value (CAA)
+ *
+ * @param array<string, mixed> $local
+ * @param array<string, mixed> $remote
+ * @return array<string, array{before: mixed, after: mixed}>
+ */
+function zm_field_changes(array $local, array $remote): array
+{
+    $changes = [];
+    $type = strtoupper((string) ($local['type'] ?? $remote['type'] ?? ''));
+
+    if (!in_array($type, ['SRV', 'CAA'], true)) {
+        $l = isset($local['content'])  ? (string) $local['content']  : null;
+        $r = isset($remote['content']) ? (string) $remote['content'] : null;
+        if ($l !== $r) {
+            $changes['content'] = ['before' => $r, 'after' => $l];
+        }
+    }
+
+    $lt = isset($local['ttl'])  ? (int) $local['ttl']  : 0;
+    $rt = isset($remote['ttl']) ? (int) $remote['ttl'] : 0;
+    // Skip the TTL row when Cloudflare is on "Auto" (ttl=1) — pushing the
+    // record will set it to cPanel's value, but practically nothing in DNS
+    // resolution changes, so the diff treats this as noise instead of a
+    // real difference. ComputeDiff already excludes TTL from the match
+    // check for the same reason. We only surface TTL when both sides have
+    // a meaningful explicit value AND they disagree.
+    if ($lt > 0 && $rt > 1 && $lt !== $rt) {
+        $changes['ttl'] = ['before' => $rt, 'after' => $lt];
+    }
+
+    if (
+        array_key_exists('proxied', $local) && array_key_exists('proxied', $remote)
+        && $local['proxied'] !== null && $remote['proxied'] !== null
+        && (bool) $local['proxied'] !== (bool) $remote['proxied']
+    ) {
+        $changes['proxied'] = ['before' => $remote['proxied'], 'after' => $local['proxied']];
+    }
+
+    if (
+        isset($local['priority']) && isset($remote['priority'])
+        && (int) $local['priority'] !== (int) $remote['priority']
+    ) {
+        $changes['priority'] = ['before' => (int) $remote['priority'], 'after' => (int) $local['priority']];
+    }
+
+    if (in_array($type, ['SRV', 'CAA'], true)) {
+        $ld = is_array($local['data']  ?? null) ? $local['data']  : [];
+        $rd = is_array($remote['data'] ?? null) ? $remote['data'] : [];
+        $keys = $type === 'SRV' ? ['priority', 'weight', 'port', 'target'] : ['flags', 'tag', 'value'];
+        foreach ($keys as $k) {
+            $a = $ld[$k] ?? null;
+            $b = $rd[$k] ?? null;
+            if ((string) $a !== (string) $b) {
+                $changes['data.' . $k] = ['before' => $b, 'after' => $a];
+            }
+        }
+    }
+
+    return $changes;
+}
+
+function zm_fmt_field_value(string $field, mixed $v): string
+{
+    if ($field === 'ttl') {
+        return zm_fmt_ttl((int) $v);
+    }
+    if ($field === 'proxied') {
+        // Sentinel; zm_cloud_swap() rewrites to a cloud SVG. Using the
+        // marker char keeps the label compact in the meta line.
+        return ((bool) $v) ? ZM_PROXIED_MARK : ZM_DNSONLY_MARK;
+    }
+    if (is_bool($v)) {
+        return $v ? 'true' : 'false';
+    }
+    if ($v === null) {
+        return '—';
+    }
+
+    return (string) $v;
+}
+
+function zm_fmt_ttl(int $ttl): string
+{
+    return $ttl === 1 ? 'Auto' : (string) $ttl;
+}
 
 /**
  * Render a record payload (either the `local` block from a diff entry, or
@@ -512,14 +1195,59 @@ function zm_format_record(mixed $payload): string
     if ($type === 'MX' && isset($payload['priority'])) {
         array_unshift($bits, (string) $payload['priority']);
     }
-    if (array_key_exists('proxied', $payload) && $payload['proxied'] !== null) {
-        $bits[] = $payload['proxied'] ? '[proxied]' : '[dns-only]';
+    // Proxy hint only makes sense for the three rrtypes Cloudflare can
+    // actually proxy. cPanel/CF still ship a `proxied: false` field on TXT
+    // and friends; tagging a TXT just clutters the diff. We emit a private-
+    // use sentinel char here, not the SVG, so the LCS word diff still sees
+    // a single stable token. zm_cloud_swap() rewrites it after escaping.
+    if (
+        in_array($type, ['A', 'AAAA', 'CNAME'], true)
+        && array_key_exists('proxied', $payload)
+        && $payload['proxied'] !== null
+    ) {
+        $bits[] = $payload['proxied'] ? ZM_PROXIED_MARK : ZM_DNSONLY_MARK;
     }
 
     return $bits === [] ? '—' : implode(' ', $bits);
 }
 
 /**
+ * Replace the private-use sentinel chars planted by zm_format_record() /
+ * zm_fmt_field_value() with inline Cloudflare-style cloud SVGs. Run this
+ * on a string that has ALREADY been passed through htmlspecialchars().
+ * The sentinel codepoints (ZM_PROXIED_MARK / ZM_DNSONLY_MARK) are defined
+ * at the top of this file. Idempotent and safe to call on strings with
+ * no sentinels.
+ */
+function zm_cloud_swap(string $html): string
+{
+    static $proxiedSvg = null;
+    static $dnsOnlySvg = null;
+    if ($proxiedSvg === null) {
+        // Material Design "cloud" outline filled — visually close to what
+        // Cloudflare uses in its dashboard for the proxy toggle.
+        $path = 'M19.35 10.04A7.49 7.49 0 0 0 12 4C9.11 4 6.6 5.64 5.35 8.04'
+            . 'A5.994 5.994 0 0 0 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24'
+            . ' 5-5 0-2.64-2.05-4.78-4.65-4.96z';
+        $svg = '<svg viewBox="0 0 24 24" width="20" height="14" fill="currentColor" aria-hidden="true"><path d="'
+            . $path . '"/></svg>';
+        $proxiedSvg = '<span class="zm-cloud zm-cloud-proxied" title="Proxied through Cloudflare">' . $svg . '</span>';
+        $dnsOnlySvg = '<span class="zm-cloud zm-cloud-dnsonly" title="DNS only — not proxied">' . $svg . '</span>';
+    }
+
+    return strtr($html, [
+        ZM_PROXIED_MARK => $proxiedSvg,
+        ZM_DNSONLY_MARK => $dnsOnlySvg,
+    ]);
+}
+
+/**
+ * Return the cPanel domains that map 1:1 onto Cloudflare zones — i.e. the
+ * apex domains the user owns (main + addon + parked). Subdomains are
+ * intentionally excluded: in Cloudflare a subdomain is a record inside
+ * its parent zone, not a zone of its own, and exposing them in the picker
+ * just leads users to "connect" something that can't be a zone.
+ *
  * @return list<string>
  */
 function zm_list_user_domains(CPANEL $cpanel, string $user): array
@@ -535,7 +1263,10 @@ function zm_list_user_domains(CPANEL $cpanel, string $user): array
             if (!empty($data['main_domain'])) {
                 $out[] = (string) $data['main_domain'];
             }
-            foreach (['addon_domains', 'parked_domains', 'sub_domains'] as $k) {
+            // Addons and parked aliases are independent apex domains in their
+            // own right. sub_domains are NOT — they live inside one of the
+            // above as DNS records and must not be offered as zone choices.
+            foreach (['addon_domains', 'parked_domains'] as $k) {
                 if (isset($data[$k]) && is_array($data[$k])) {
                     foreach ($data[$k] as $d) {
                         if (is_string($d) && $d !== '') {
@@ -559,7 +1290,7 @@ function zm_list_user_domains(CPANEL $cpanel, string $user): array
             if (preg_match('/^main_domain:\s*(\S+)/m', $raw, $m)) {
                 $out[] = $m[1];
             }
-            foreach (['addon_domains', 'parked_domains', 'sub_domains'] as $k) {
+            foreach (['addon_domains', 'parked_domains'] as $k) {
                 if (preg_match('/^' . $k . ':\s*\n((?:\s+-\s+\S+\n?)+)/m', $raw, $m)) {
                     foreach (preg_split('/\R/', $m[1]) as $line) {
                         if (preg_match('/^\s+-\s+(\S+)/', $line, $mm)) {

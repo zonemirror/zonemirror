@@ -69,6 +69,7 @@ final class HookHandler
             $defaults = [
                 'proxied' => $meta['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
                 'ttl' => $systemDefaults['defaults']['ttl'],
+                'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
             ];
 
             $record = (new CpanelToCloudflareMapper())->map($extracted['raw'], $defaults);

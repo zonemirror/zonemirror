@@ -64,15 +64,39 @@ final class ComputeDiff
         $contents = (string) file_get_contents($path);
         $localRecords = $this->parser->parse($contents, $zoneName);
 
+        $systemCfg = $this->systemConfig->load();
+
         // Apply the WHM-admin email DNS policy (DMARC override, SPF extras)
         // BEFORE the comparison runs, so the diff table — and any later
         // apply — uses the normalised payload as the cPanel side. Without
         // this, the user would see "Replace" rows where local and remote
         // are actually going to end up identical once we push.
-        $policy = $this->systemConfig->load()['email_normalization'] ?? [];
+        $policy = $systemCfg['email_normalization'] ?? [];
         if (is_array($policy)) {
             $localRecords = array_map(
                 fn (DnsRecord $r): DnsRecord => $this->normalizer->normalize($r, $zoneName, $policy),
+                $localRecords,
+            );
+        }
+
+        // When the WHM admin opts in to "Auto TTL" (default), rewrite the
+        // parsed cPanel TTLs to 1 ("Auto") before comparing. cPanel zone
+        // files default to 14400 which propagates as noise into the diff
+        // and ultimately into Cloudflare unless we collapse it here.
+        // Doing it at compute-time also means the persisted diff entries
+        // carry ttl=1, so the later apply pushes that value unchanged.
+        $autoTtl = (bool) ($systemCfg['defaults']['auto_ttl'] ?? true);
+        if ($autoTtl) {
+            $localRecords = array_map(
+                static fn (DnsRecord $r): DnsRecord => new DnsRecord(
+                    type: $r->type,
+                    name: $r->name,
+                    content: $r->content,
+                    ttl: 1,
+                    priority: $r->priority,
+                    proxied: $r->proxied,
+                    data: $r->data,
+                ),
                 $localRecords,
             );
         }
@@ -156,9 +180,16 @@ final class ComputeDiff
                 DnsDiff::STATUS_IDENTICAL => 3,
             ];
 
-            return ($order[$a->status] <=> $order[$b->status])
-                ?: ($a->type <=> $b->type)
-                ?: ($a->name <=> $b->name);
+            $statusCmp = $order[$a->status] <=> $order[$b->status];
+            if ($statusCmp !== 0) {
+                return $statusCmp;
+            }
+            $typeCmp = $a->type <=> $b->type;
+            if ($typeCmp !== 0) {
+                return $typeCmp;
+            }
+
+            return $a->name <=> $b->name;
         });
 
         return new DnsDiff(
@@ -189,7 +220,7 @@ final class ComputeDiff
             strtoupper((string) ($r['type'] ?? '')),
             (string) ($r['name'] ?? ''),
             isset($r['content']) ? (string) $r['content'] : null,
-            isset($r['priority']) && $r['priority'] !== null ? (int) $r['priority'] : null,
+            isset($r['priority']) ? (int) $r['priority'] : null,
             is_array($r['data'] ?? null) ? $r['data'] : [],
         );
     }

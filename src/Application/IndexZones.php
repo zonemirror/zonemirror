@@ -83,6 +83,7 @@ final class IndexZones
         $client = $this->makeClient($plaintext);
 
         $rawStatus = '';
+
         try {
             $rawStatus = $client->verifyTokenStatus();
         } catch (Throwable $e) {
@@ -114,6 +115,7 @@ final class IndexZones
         }
 
         $zones = [];
+
         try {
             $zones = $client->listZones();
         } catch (Throwable $e) {

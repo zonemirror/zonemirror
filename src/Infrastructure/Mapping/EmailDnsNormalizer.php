@@ -50,14 +50,17 @@ final class EmailDnsNormalizer
             }
         }
 
-        $content = (string) ($record->content ?? '');
+        $content = $record->content ?? '';
         if ($this->looksLikeSpf($content)) {
+            // Always run the SPF rewriter — even with no admin-configured
+            // extras. The pass normalises every mechanism's qualifier to
+            // its explicit form, because Cloudflare stores `+ip4:X` while
+            // cPanel emits bare `ip4:X`. Without this they'd compare as
+            // different forever and every SPF row would noise up the diff.
             $extras = $this->validExtras($policy['spf_extras'] ?? []);
-            if ($extras !== []) {
-                $rewritten = $this->mergeSpf($content, $extras, $zone);
-                if ($rewritten !== $content) {
-                    return $this->withContent($record, $rewritten);
-                }
+            $rewritten = $this->mergeSpf($content, $extras, $zone);
+            if ($rewritten !== $content) {
+                return $this->withContent($record, $rewritten);
             }
         }
 
@@ -120,8 +123,8 @@ final class EmailDnsNormalizer
      */
     private function mergeSpf(string $spf, array $extras, string $zone): string
     {
-        $tokens = preg_split('/\s+/', trim($spf)) ?: [];
-        if ($tokens === [] || strcasecmp($tokens[0], 'v=spf1') !== 0) {
+        $tokens = preg_split('/\s+/', trim($spf));
+        if ($tokens === false || $tokens === [] || strcasecmp($tokens[0], 'v=spf1') !== 0) {
             return $spf;
         }
 
@@ -130,12 +133,18 @@ final class EmailDnsNormalizer
         $allToken = null;
         $last = end($tokens);
         if (is_string($last) && preg_match('/^[+\-?~]?all$/i', $last) === 1) {
-            $allToken = $last;
+            $allToken = $this->canonicaliseSpfToken($last);
             array_pop($tokens);
         }
 
+        // Canonicalise every remaining mechanism to its explicit qualifier
+        // form (`a` → `+a`, `ip4:X` → `+ip4:X`) BEFORE checking for
+        // already-present extras — otherwise an admin who lists "+ip4:X"
+        // would still see it appended next to a pre-existing bare "ip4:X".
+        $tokens = array_map(fn (string $t): string => $this->canonicaliseSpfToken($t), $tokens);
+
         $renderedExtras = array_map(
-            fn (string $e): string => $this->renderTemplate($e, $zone),
+            fn (string $e): string => $this->canonicaliseSpfToken($this->renderTemplate($e, $zone)),
             $extras,
         );
 
@@ -152,5 +161,31 @@ final class EmailDnsNormalizer
         }
 
         return implode(' ', $tokens);
+    }
+
+    /**
+     * Force-prefix the implicit "+" qualifier on SPF mechanisms so the
+     * canonical form matches what Cloudflare stores. cPanel emits bare
+     * tokens (`a`, `mx`, `ip4:1.2.3.4`); CF stores `+a`, `+mx`,
+     * `+ip4:1.2.3.4`. SPF parsers treat them as equivalent (RFC 7208
+     * §4.6.2: a missing qualifier means `+`), so normalising here is
+     * lossless. Tokens that already start with `+ - ? ~` are returned
+     * unchanged.
+     */
+    private function canonicaliseSpfToken(string $token): string
+    {
+        if ($token === '' || strcasecmp($token, 'v=spf1') === 0) {
+            return $token;
+        }
+        if (preg_match('/^[+\-?~]/', $token) === 1) {
+            return $token;
+        }
+        // Mechanism keywords per RFC 7208 §5. Anything else (modifiers like
+        // `redirect=` and `exp=`) doesn't take a qualifier and stays as-is.
+        if (preg_match('/^(a|mx|ip4|ip6|include|exists|ptr|all)([:\/]|$)/i', $token) === 1) {
+            return '+' . $token;
+        }
+
+        return $token;
     }
 }

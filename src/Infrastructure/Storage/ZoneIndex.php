@@ -43,6 +43,7 @@ final class ZoneIndex
     {
         $pdo = $this->pdo();
         $pdo->beginTransaction();
+
         try {
             $del = $pdo->prepare('DELETE FROM zones WHERE admin_token_id = ?');
             $del->execute([$tokenId]);
@@ -142,8 +143,12 @@ final class ZoneIndex
     public function count(): int
     {
         $pdo = $this->pdo();
+        $stmt = $pdo->query('SELECT COUNT(*) FROM zones');
+        if ($stmt === false) {
+            return 0;
+        }
 
-        return (int) $pdo->query('SELECT COUNT(*) FROM zones')->fetchColumn();
+        return (int) $stmt->fetchColumn();
     }
 
     /**
@@ -157,8 +162,12 @@ final class ZoneIndex
              FROM zones WHERE admin_token_id = ? ORDER BY name'
         );
         $stmt->execute([$tokenId]);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        if ($rows === false) {
+            return [];
+        }
 
-        return $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        return $rows;
     }
 
     private function pdo(): PDO

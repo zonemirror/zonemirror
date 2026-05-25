@@ -19,14 +19,18 @@ use RuntimeException;
  * for the server's IPv6 and outbound mail host, etc.) without having to
  * touch each per-user zone file in cPanel.
  *
+ * @phpstan-type DmarcBuilderCfg array{enabled: bool, policy: string, email: string, rua: bool, ruf: bool, sp: string, pct: ?int, custom: string}
  * @phpstan-type SystemConfig array{
- *     defaults: array{proxied: bool, ttl: int},
+ *     defaults: array{proxied: bool, ttl: int, auto_ttl: bool},
  *     allowed_users: 'all'|list<string>,
  *     rate_limit_rps: int,
  *     dry_run: bool,
  *     email_normalization: array{
  *         dmarc_template: string,
- *         spf_extras: list<string>
+ *         spf_extras: list<string>,
+ *         dmarc: DmarcBuilderCfg,
+ *         spf_presets: list<string>,
+ *         spf_custom: string
  *     }
  * }
  */
@@ -57,6 +61,11 @@ final class SystemConfigStorage
         if (isset($json['defaults']) && is_array($json['defaults'])) {
             $merged['defaults']['proxied'] = (bool) ($json['defaults']['proxied'] ?? $defaults['defaults']['proxied']);
             $merged['defaults']['ttl'] = max(60, (int) ($json['defaults']['ttl'] ?? $defaults['defaults']['ttl']));
+            // auto_ttl is the source of truth for "push ttl=1 to Cloudflare".
+            // When the key is absent (legacy installs), fall through to the
+            // hard-coded default of true so the new behaviour kicks in
+            // without forcing the operator to re-save the form first.
+            $merged['defaults']['auto_ttl'] = (bool) ($json['defaults']['auto_ttl'] ?? $defaults['defaults']['auto_ttl']);
         }
         if (isset($json['allowed_users'])) {
             if ($json['allowed_users'] === 'all') {
@@ -92,9 +101,57 @@ final class SystemConfigStorage
                 }
                 $merged['email_normalization']['spf_extras'] = $extras;
             }
+            if (isset($en['dmarc']) && is_array($en['dmarc'])) {
+                $merged['email_normalization']['dmarc'] = $this->normaliseDmarcBuilder(
+                    $en['dmarc'],
+                    $merged['email_normalization']['dmarc'],
+                );
+            }
+            if (isset($en['spf_presets']) && is_array($en['spf_presets'])) {
+                $merged['email_normalization']['spf_presets'] = array_values(array_filter(
+                    array_map(static fn ($s): string => is_string($s) ? $s : '', $en['spf_presets']),
+                    static fn (string $s): bool => $s !== '',
+                ));
+            }
+            if (isset($en['spf_custom']) && is_string($en['spf_custom'])) {
+                $merged['email_normalization']['spf_custom'] = $en['spf_custom'];
+            }
         }
 
         return $merged;
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @param array{enabled: bool, policy: string, email: string, rua: bool, ruf: bool, sp: string, pct: ?int, custom: string} $defaults
+     * @return array{enabled: bool, policy: string, email: string, rua: bool, ruf: bool, sp: string, pct: ?int, custom: string}
+     */
+    private function normaliseDmarcBuilder(array $raw, array $defaults): array
+    {
+        $policy = is_string($raw['policy'] ?? null) && in_array($raw['policy'], ['none', 'quarantine', 'reject'], true)
+            ? $raw['policy']
+            : $defaults['policy'];
+        $sp = is_string($raw['sp'] ?? null) && in_array($raw['sp'], ['', 'none', 'quarantine', 'reject'], true)
+            ? $raw['sp']
+            : $defaults['sp'];
+        $pct = null;
+        if (isset($raw['pct'])) {
+            $n = (int) $raw['pct'];
+            if ($n >= 1 && $n <= 100) {
+                $pct = $n;
+            }
+        }
+
+        return [
+            'enabled' => (bool) ($raw['enabled'] ?? $defaults['enabled']),
+            'policy'  => $policy,
+            'email'   => is_string($raw['email'] ?? null) ? trim($raw['email']) : $defaults['email'],
+            'rua'     => (bool) ($raw['rua'] ?? $defaults['rua']),
+            'ruf'     => (bool) ($raw['ruf'] ?? $defaults['ruf']),
+            'sp'      => $sp,
+            'pct'     => $pct,
+            'custom'  => is_string($raw['custom'] ?? null) ? trim($raw['custom']) : $defaults['custom'],
+        ];
     }
 
     /**
@@ -142,13 +199,25 @@ final class SystemConfigStorage
         // yet must NOT push to Cloudflare. The admin opts in by enrolling
         // users (allowed_users) and explicitly disabling dry-run from WHM.
         return [
-            'defaults' => ['proxied' => false, 'ttl' => 300],
+            'defaults' => ['proxied' => false, 'ttl' => 300, 'auto_ttl' => true],
             'allowed_users' => [],
             'rate_limit_rps' => 5,
             'dry_run' => true,
             'email_normalization' => [
                 'dmarc_template' => '',
                 'spf_extras' => [],
+                'dmarc' => [
+                    'enabled' => false,
+                    'policy' => 'none',
+                    'email' => '',
+                    'rua' => true,
+                    'ruf' => false,
+                    'sp' => '',
+                    'pct' => null,
+                    'custom' => '',
+                ],
+                'spf_presets' => [],
+                'spf_custom' => '',
             ],
         ];
     }

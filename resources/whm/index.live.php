@@ -244,6 +244,22 @@ $justConnected = $tokensVm['message'] !== '';
 </div>
 <?php endforeach; ?>
 
+<?php /* Advanced-form save feedback. The form lives inside a collapsed
+        <details>, so after a POST round-trip we render this banner at
+        the top of the page where it's actually visible — and keep the
+        Advanced panel open so the user can see the field they just
+        edited still has the new value. */ ?>
+<?php if ($adminVm['saved']): ?>
+<div class="card">
+  <p class="ok" style="margin: 0; font-weight: 500;">✓ Settings saved.</p>
+</div>
+<?php endif; ?>
+<?php foreach ($adminVm['errors'] as $err): ?>
+<div class="card">
+  <p class="err" style="margin: 0;">⚠ <?= $h($err) ?></p>
+</div>
+<?php endforeach; ?>
+
 <?php if (!$tokensVm['allowed']): ?>
 
   <div class="card">
@@ -362,17 +378,14 @@ $justConnected = $tokensVm['message'] !== '';
 
 <?php endif; ?>
 
-<!-- ─── Advanced (collapsed by default) ─────────────────────────────────── -->
+<!-- ─── Advanced (collapsed by default, re-opens after a save attempt) ─── -->
 <div class="card">
-  <details class="advanced">
+  <details class="advanced" <?= ($adminVm['saved'] || $adminVm['errors'] !== []) ? 'open' : '' ?>>
     <summary>Advanced settings</summary>
 
-    <?php if ($adminVm['saved']): ?>
-      <p class="ok">Settings saved.</p>
-    <?php endif; ?>
-    <?php foreach ($adminVm['errors'] as $err): ?>
-      <p class="err"><?= $h($err) ?></p>
-    <?php endforeach; ?>
+    <?php /* Save feedback is already shown at the top of the page; we
+            keep nothing inline so the user doesn't see the same message
+            twice when the disclosure is open. */ ?>
 
     <form method="post" autocomplete="off">
       <input type="hidden" name="form" value="admin">
@@ -382,8 +395,35 @@ $justConnected = $tokensVm['message'] !== '';
         <legend>Defaults</legend>
         <p><label><input type="checkbox" name="defaults_proxied" <?= $adminVm['defaults_proxied'] ? 'checked' : '' ?>>
           Default to proxied A/AAAA/CNAME records when users enable sync</label></p>
-        <p><label>Default TTL (seconds, min 60):
-          <input type="number" min="60" name="default_ttl" value="<?= (int) $adminVm['default_ttl'] ?>"></label></p>
+
+        <p style="margin-top: 0.75rem;">
+          <label><input type="checkbox" name="auto_ttl" id="zm-auto-ttl" <?= $adminVm['auto_ttl'] ? 'checked' : '' ?>>
+            Use Cloudflare <strong>Auto</strong> TTL on every record (recommended)</label>
+          <span class="muted" style="font-size: 0.85em; display: block; margin-left: 1.65rem;">
+            Cloudflare picks the right TTL based on whether the record is proxied or not.
+            cPanel zone files usually carry stale 14400-second TTLs that nobody curated;
+            this collapses them all to Auto.
+          </span>
+        </p>
+
+        <p id="zm-manual-ttl-row" style="margin-left: 1.65rem; <?= $adminVm['auto_ttl'] ? 'display:none;' : '' ?>">
+          <label>Manual TTL (seconds, min 60):
+            <input type="number" min="60" name="default_ttl" value="<?= (int) $adminVm['default_ttl'] ?>"></label>
+          <span class="muted" style="font-size: 0.85em;">
+            Only used when the record being pushed has no TTL of its own.
+          </span>
+        </p>
+        <script>
+          (function(){
+            var cb = document.getElementById('zm-auto-ttl');
+            var row = document.getElementById('zm-manual-ttl-row');
+            if (cb && row) {
+              cb.addEventListener('change', function(){
+                row.style.display = cb.checked ? 'none' : '';
+              });
+            }
+          })();
+        </script>
       </fieldset>
 
       <fieldset>
@@ -409,36 +449,208 @@ $justConnected = $tokensVm['message'] !== '';
 
       <fieldset>
         <legend>Email DNS normalisation</legend>
-        <p class="muted" style="margin: 0 0 0.8rem;">
+        <p class="muted" style="margin: 0 0 1rem;">
           Applied to every domain&rsquo;s diff before it is shown to the
           user. The local cPanel zone file is never modified — these
           transforms only affect what gets pushed to Cloudflare.
           Use <code>{domain}</code> as a placeholder for the zone name.
         </p>
 
-        <p>
-          <label>DMARC override (<code>_dmarc.&lt;domain&gt;</code> TXT)
-            <input type="text" name="dmarc_template"
-                   value="<?= $h($adminVm['dmarc_template']) ?>"
-                   placeholder="v=DMARC1; p=none; rua=mailto:sysadmin@your-host.tld; ruf=mailto:sysadmin@your-host.tld">
-          </label>
-          <span class="muted" style="font-size: 0.85em;">
-            If set, replaces every domain&rsquo;s <code>_dmarc</code> TXT
-            with this string. Leave blank to keep what cPanel emits.
-          </span>
+        <!-- ─── DMARC builder ─── -->
+        <h4 style="margin: 0.5rem 0 0.4rem; font-size: 1em;">DMARC reporting</h4>
+        <p class="muted" style="font-size: 0.88em; margin: 0 0 0.6rem;">
+          cPanel ships a placeholder <code>_dmarc</code> TXT with no
+          <code>rua</code>/<code>ruf</code>, so failure reports never reach
+          anyone. Use the builder below to centralise them on your sysadmin
+          inbox. <a href="https://dmarc.org/" target="_blank" rel="noopener">What&rsquo;s DMARC?</a>
         </p>
 
         <p>
-          <label>SPF extras (one mechanism per line)
-            <textarea name="spf_extras" rows="4" style="font-family: ui-monospace, monospace; font-size: 0.9em;"
-              placeholder="+ip6:2a01:4f8:2210:1792::2&#10;+a:mail.{domain}"><?= $h($adminVm['spf_extras']) ?></textarea>
+          <label>
+            <input type="checkbox" name="dmarc_enable" id="zm-dmarc-enable"
+                   <?= $adminVm['dmarc']['enabled'] ? 'checked' : '' ?>>
+            Override <code>_dmarc</code> on every domain
           </label>
-          <span class="muted" style="font-size: 0.85em;">
-            Each line is spliced into the domain&rsquo;s <code>v=spf1</code>
-            TXT just before the terminal <code>~all</code>/<code>-all</code>.
-            Duplicates are skipped, so re-applying is safe.
+        </p>
+
+        <div id="zm-dmarc-options" style="margin-left: 1.6rem; <?= $adminVm['dmarc']['enabled'] ? '' : 'display:none;' ?>">
+          <p style="margin-top: 0.3rem;">
+            <span style="font-weight: 500;">Policy (<code>p=</code>):</span><br>
+            <label style="display:inline-block; margin-right: 1rem; font-weight: normal;">
+              <input type="radio" name="dmarc_policy" value="none"
+                     <?= $adminVm['dmarc']['policy'] === 'none' ? 'checked' : '' ?>>
+              <code>none</code> &mdash; monitor only
+            </label>
+            <label style="display:inline-block; margin-right: 1rem; font-weight: normal;">
+              <input type="radio" name="dmarc_policy" value="quarantine"
+                     <?= $adminVm['dmarc']['policy'] === 'quarantine' ? 'checked' : '' ?>>
+              <code>quarantine</code> &mdash; send to spam
+            </label>
+            <label style="display:inline-block; font-weight: normal;">
+              <input type="radio" name="dmarc_policy" value="reject"
+                     <?= $adminVm['dmarc']['policy'] === 'reject' ? 'checked' : '' ?>>
+              <code>reject</code> &mdash; drop
+            </label>
+            <span class="muted" style="font-size: 0.85em; display: block; margin-top: 0.25rem;">
+              Start with <code>none</code>. Monitor incoming reports for a
+              week or two, fix any legitimate senders that are failing
+              SPF/DKIM, then tighten to <code>quarantine</code> or
+              <code>reject</code>. Going straight to <code>reject</code>
+              on a domain that&rsquo;s never been audited will silently
+              drop legitimate mail.
+            </span>
+          </p>
+
+          <p>
+            <label>Reports go to:
+              <input type="text" name="dmarc_email"
+                     value="<?= $h($adminVm['dmarc']['email']) ?>"
+                     placeholder="sysadmin@your-host.tld"
+                     style="font-family: ui-monospace, monospace;">
+            </label>
+            <span style="display:inline-block; margin-top: 0.3rem;">
+              <label style="display:inline-block; margin-right: 1rem; font-weight: normal;">
+                <input type="checkbox" name="dmarc_rua"
+                       <?= $adminVm['dmarc']['rua'] ? 'checked' : '' ?>>
+                Aggregate (<code>rua</code>) &mdash; daily summary
+              </label>
+              <label style="display:inline-block; font-weight: normal;">
+                <input type="checkbox" name="dmarc_ruf"
+                       <?= $adminVm['dmarc']['ruf'] ? 'checked' : '' ?>>
+                Forensic (<code>ruf</code>) &mdash; per-message
+              </label>
+            </span>
+            <span class="muted" style="font-size: 0.85em; display: block; margin-top: 0.25rem;">
+              Most providers (Google, Microsoft, Yahoo) only send <code>rua</code>;
+              <code>ruf</code> is rare in practice and noisy when it does fire.
+            </span>
+          </p>
+
+          <p>
+            <label>Subdomain policy (<code>sp=</code>) <small style="color:#888">optional</small>
+              <select name="dmarc_sp">
+                <option value=""           <?= $adminVm['dmarc']['sp'] === '' ? 'selected' : '' ?>>Same as policy above</option>
+                <option value="none"       <?= $adminVm['dmarc']['sp'] === 'none' ? 'selected' : '' ?>>none</option>
+                <option value="quarantine" <?= $adminVm['dmarc']['sp'] === 'quarantine' ? 'selected' : '' ?>>quarantine</option>
+                <option value="reject"     <?= $adminVm['dmarc']['sp'] === 'reject' ? 'selected' : '' ?>>reject</option>
+              </select>
+            </label>
+            <span class="muted" style="font-size: 0.85em; display: block; margin-top: 0.25rem;">
+              If you don&rsquo;t send mail from <em>subdomains</em>, locking these to
+              <code>reject</code> while the main policy stays at <code>none</code>
+              is a safe way to stop subdomain-spoofing without risking your real mail.
+            </span>
+          </p>
+
+          <p>
+            <label>Percentage (<code>pct=</code>) <small style="color:#888">optional, 1&ndash;99</small>
+              <input type="number" name="dmarc_pct" min="1" max="99"
+                     value="<?= $adminVm['dmarc']['pct'] !== null ? (int) $adminVm['dmarc']['pct'] : '' ?>"
+                     placeholder="100">
+            </label>
+            <span class="muted" style="font-size: 0.85em; display: block; margin-top: 0.25rem;">
+              Only enforce the policy on this share of failing messages.
+              Useful for a staged rollout (e.g. <code>pct=10</code> first).
+              Leave blank for 100%.
+            </span>
+          </p>
+
+          <p>
+            <label>Or paste a complete record (advanced):
+              <input type="text" name="dmarc_custom"
+                     value="<?= $h($adminVm['dmarc']['custom']) ?>"
+                     placeholder="v=DMARC1; p=reject; rua=mailto:...; adkim=s; aspf=s; fo=1"
+                     style="font-family: ui-monospace, monospace;">
+            </label>
+            <span class="muted" style="font-size: 0.85em; display: block; margin-top: 0.25rem;">
+              If set, overrides everything above. Use this for tags the
+              builder doesn&rsquo;t expose (<code>adkim</code>, <code>aspf</code>,
+              <code>fo</code>, <code>rf</code>, <code>ri</code>).
+            </span>
+          </p>
+
+          <p style="background:#f6f8fa; border:1px solid #e1e4e8; border-radius:4px; padding:0.5rem 0.7rem; font-size:0.85em;">
+            <strong>Resulting record:</strong>
+            <code id="zm-dmarc-preview" style="display: block; margin-top: 0.3rem; word-break: break-all;">
+              <?= $h($adminVm['dmarc_template'] !== '' ? $adminVm['dmarc_template'] : '(disabled — cPanel placeholder will be left alone)') ?>
+            </code>
+          </p>
+        </div>
+
+        <!-- ─── SPF builder ─── -->
+        <h4 style="margin: 1.2rem 0 0.4rem; font-size: 1em;">SPF extras</h4>
+        <p class="muted" style="font-size: 0.88em; margin: 0 0 0.6rem;">
+          cPanel&rsquo;s <code>v=spf1</code> mentions the server&rsquo;s IPv4 plus the
+          local A/MX records but leaves out the IPv6 and any third-party senders.
+          Tick the ones you actually use; each becomes one mechanism spliced into
+          the SPF before the terminal <code>~all</code>/<code>-all</code>.
+          Duplicates are skipped, so re-applying is safe.
+        </p>
+
+        <p style="margin-bottom: 0.3rem;"><strong>Server presets</strong></p>
+        <?php foreach (['a_mail', 'server_ipv6'] as $slug):
+            $opt = $adminVm['spf_preset_options'][$slug];
+            if ($slug === 'server_ipv6' && $adminVm['server_ipv6'] === '') continue;
+            $mech = $opt['mechanism'];
+            if ($slug === 'server_ipv6') $mech = str_replace('{server_ipv6}', $adminVm['server_ipv6'], $mech);
+            ?>
+          <p style="margin: 0.15rem 0;">
+            <label style="font-weight: normal;">
+              <input type="checkbox" name="spf_preset[]" value="<?= $h($slug) ?>"
+                     <?= in_array($slug, $adminVm['spf_presets'], true) ? 'checked' : '' ?>>
+              <code><?= $h($mech) ?></code> &mdash; <?= $h($opt['label']) ?>
+            </label>
+          </p>
+        <?php endforeach; ?>
+
+        <p style="margin: 0.8rem 0 0.3rem;"><strong>Third-party senders</strong>
+          <span class="muted" style="font-weight: normal; font-size: 0.85em;">
+            (tick only the ones you actually use; every extra <code>include</code>
+            counts against the SPF 10-lookup limit)
           </span>
         </p>
+        <?php foreach (['google', 'outlook', 'mailgun', 'sendgrid', 'mailjet', 'amazon_ses', 'salesforce', 'mailchimp', 'zoho'] as $slug):
+            $opt = $adminVm['spf_preset_options'][$slug] ?? null;
+            if ($opt === null) continue;
+            ?>
+          <p style="margin: 0.15rem 0;">
+            <label style="font-weight: normal;">
+              <input type="checkbox" name="spf_preset[]" value="<?= $h($slug) ?>"
+                     <?= in_array($slug, $adminVm['spf_presets'], true) ? 'checked' : '' ?>>
+              <code><?= $h($opt['mechanism']) ?></code> &mdash; <?= $h($opt['label']) ?>
+            </label>
+          </p>
+        <?php endforeach; ?>
+
+        <p style="margin-top: 0.8rem;">
+          <label>Custom mechanisms (one per line)
+            <textarea name="spf_custom" rows="3" style="font-family: ui-monospace, monospace; font-size: 0.9em;"
+              placeholder="+a:newsletters.example.com&#10;+ip4:198.51.100.7"><?= $h($adminVm['spf_custom']) ?></textarea>
+          </label>
+          <span class="muted" style="font-size: 0.85em;">
+            Anything that doesn&rsquo;t fit a preset above. Use the explicit
+            qualifier (<code>+</code>, <code>-</code>, <code>~</code>, <code>?</code>).
+          </span>
+        </p>
+
+        <p style="background:#f6f8fa; border:1px solid #e1e4e8; border-radius:4px; padding:0.5rem 0.7rem; font-size:0.85em;">
+          <strong>Tokens that will be injected:</strong>
+          <code style="display: block; margin-top: 0.3rem; word-break: break-all;">
+            <?= $adminVm['spf_extras'] !== '' ? $h(implode(' ', preg_split('/\R+/', $adminVm['spf_extras']) ?: [])) : '<span style="color:#888">(none)</span>' ?>
+          </code>
+        </p>
+
+        <script>
+          (function(){
+            var cb = document.getElementById('zm-dmarc-enable');
+            var block = document.getElementById('zm-dmarc-options');
+            if (cb && block) {
+              cb.addEventListener('change', function(){
+                block.style.display = cb.checked ? '' : 'none';
+              });
+            }
+          })();
+        </script>
       </fieldset>
 
       <button type="submit">Save</button>

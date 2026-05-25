@@ -88,8 +88,11 @@ final class EmailDnsNormalizerTest extends TestCase
             'spf_extras' => ['+ip6:2001:db8::1', '+a:mail.{domain}'],
         ]);
 
+        // Bare `ip4:` is canonicalised to `+ip4:` so it matches the form
+        // Cloudflare stores; otherwise the diff would forever show the
+        // record as "different" just because of the qualifier.
         self::assertSame(
-            'v=spf1 ip4:1.2.3.4 +a +mx +ip6:2001:db8::1 +a:mail.example.com ~all',
+            'v=spf1 +ip4:1.2.3.4 +a +mx +ip6:2001:db8::1 +a:mail.example.com ~all',
             $out->content,
         );
     }
@@ -99,7 +102,7 @@ final class EmailDnsNormalizerTest extends TestCase
         $record = new DnsRecord(
             RecordType::TXT,
             'example.com',
-            'v=spf1 ip4:1.2.3.4 +ip6:2001:db8::1 ~all',
+            'v=spf1 +ip4:1.2.3.4 +ip6:2001:db8::1 ~all',
             14400,
             null,
             null,
@@ -111,7 +114,7 @@ final class EmailDnsNormalizerTest extends TestCase
         ]);
 
         // Already present → no duplicate token.
-        self::assertSame('v=spf1 ip4:1.2.3.4 +ip6:2001:db8::1 ~all', $out->content);
+        self::assertSame('v=spf1 +ip4:1.2.3.4 +ip6:2001:db8::1 ~all', $out->content);
     }
 
     public function testSpfWithoutTerminalAllStillGetsExtras(): void
@@ -130,7 +133,31 @@ final class EmailDnsNormalizerTest extends TestCase
             'spf_extras' => ['+ip6:2001:db8::1'],
         ]);
 
-        self::assertSame('v=spf1 ip4:1.2.3.4 +ip6:2001:db8::1', $out->content);
+        self::assertSame('v=spf1 +ip4:1.2.3.4 +ip6:2001:db8::1', $out->content);
+    }
+
+    public function testSpfQualifierIsCanonicalisedEvenWithoutExtras(): void
+    {
+        // No admin-configured extras at all — the pass must still run so
+        // the bare cPanel form ("ip4:X +a +mx") becomes the Cloudflare-
+        // canonical form ("+ip4:X +a +mx"); otherwise the same SPF would
+        // forever show as "different" in the review.
+        $record = new DnsRecord(
+            RecordType::TXT,
+            'example.com',
+            'v=spf1 ip4:1.2.3.4 a mx include:_spf.google.com ~all',
+            14400,
+            null,
+            null,
+            [],
+        );
+
+        $out = $this->normalizer->normalize($record, 'example.com', []);
+
+        self::assertSame(
+            'v=spf1 +ip4:1.2.3.4 +a +mx +include:_spf.google.com ~all',
+            $out->content,
+        );
     }
 
     public function testSpfWithMinusAllPreservesQualifier(): void
