@@ -16,6 +16,8 @@ LIVEAPI_DIR="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
 WHM_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/${PLUGIN_ID}"
 ICON_TARGET_DIR="/usr/local/cpanel/base/unprotected/${PLUGIN_ID}"
 DYNAMICUI_CONF="/usr/local/cpanel/base/frontend/jupiter/dynamicui/dynamicui_${PLUGIN_ID}.conf"
+JUPITER_APP_ICON="/usr/local/cpanel/base/frontend/jupiter/assets/application_icons/${PLUGIN_ID}.png"
+WHM_ADDON_ICON="/usr/local/cpanel/whostmgr/docroot/addon_plugins/${PLUGIN_ID}.png"
 CLI_SYMLINK="/usr/local/bin/zonemirror"
 
 PURGE=false
@@ -41,8 +43,14 @@ fi
 
 /usr/local/cpanel/bin/unregister_cpanelplugin "$PREFIX/packaging/zonemirror.cpanelplugin" 2>/dev/null || true
 
-rm -f "$CLI_SYMLINK" "$DYNAMICUI_CONF"
+rm -f "$CLI_SYMLINK" "$DYNAMICUI_CONF" "$JUPITER_APP_ICON" "$WHM_ADDON_ICON"
 rm -rf "$PREFIX" "$LIVEAPI_DIR" "$WHM_DIR" "$ICON_TARGET_DIR"
+
+# Rebuild the Jupiter sprite sheet so the now-stale .icon-zonemirror class
+# does not linger in icon_spritemap.css/svg/png.
+if [[ -x /usr/local/cpanel/bin/sprite_generator ]]; then
+  /usr/local/cpanel/bin/sprite_generator --theme=jupiter >/dev/null 2>&1 || true
+fi
 
 if $PURGE; then
   rm -rf "$SYSTEM_DIR"
