@@ -4,18 +4,21 @@ declare(strict_types=1);
 
 namespace ZoneMirror\Interface\Worker;
 
+use ZoneMirror\Application\IndexZones;
 use ZoneMirror\Application\ProcessEvent;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareException;
 use ZoneMirror\Infrastructure\Cloudflare\ZoneSnapshot;
 use ZoneMirror\Infrastructure\Logging\FileLogger;
 use ZoneMirror\Infrastructure\Queue\SqliteQueue;
+use ZoneMirror\Infrastructure\Storage\AdminTokenStorage;
 use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
 use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
 use ZoneMirror\Infrastructure\Storage\Paths;
 use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
 use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
+use ZoneMirror\Infrastructure\Storage\ZoneIndex;
 
 /**
  * Background daemon. Iterates the enrolled users, drains each per-user queue
@@ -38,6 +41,7 @@ use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
 final class WorkerLoop
 {
     private const CONFIG_RELOAD_SECONDS = 30;
+    private const ZONE_INDEX_REFRESH_SECONDS = 3600;
 
     private bool $stop = false;
 
@@ -58,10 +62,19 @@ final class WorkerLoop
 
         $systemStorage = new SystemConfigStorage();
         $enrolled = new EnrolledUsers();
+        $adminTokens = new AdminTokenStorage(
+            new ConfigCrypto(new KeyStore(Paths::adminKeyFile()))
+        );
+        $zoneIndex = new ZoneIndex(Paths::zoneIndexFile());
+        $zoneIndexer = new IndexZones($adminTokens, $zoneIndex, $this->log);
 
         $sysCache = $systemStorage->load();
         $usersCache = $enrolled->all();
         $cacheUntil = time() + self::CONFIG_RELOAD_SECONDS;
+
+        // Refresh the zone index on the very first iteration so a fresh
+        // install starts with an accurate picture; then on the slow timer.
+        $zoneIndexNextRun = 0;
 
         while (!$this->isStopRequested()) {
             $now = time();
@@ -69,6 +82,10 @@ final class WorkerLoop
                 $sysCache = $systemStorage->load();
                 $usersCache = $enrolled->all();
                 $cacheUntil = $now + self::CONFIG_RELOAD_SECONDS;
+            }
+            if ($now >= $zoneIndexNextRun) {
+                $zoneIndexer->runOnce();
+                $zoneIndexNextRun = $now + self::ZONE_INDEX_REFRESH_SECONDS;
             }
 
             $perCallSleepUs = $this->perCallSleepMicroseconds($sysCache['rate_limit_rps']);
