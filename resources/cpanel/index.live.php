@@ -10,6 +10,14 @@ declare(strict_types=1);
 
 use ZoneMirror\Interface\Ui\UserController;
 
+// cPanel LIVEAPI handshake. cpsrvd writes a session token to STDIN and
+// expects "<length>\n<token>\n" on STDOUT before any other output. Without
+// it the child cannot establish the LIVEAPI session, $_ENV['REMOTE_USER']
+// stays empty, and the page renders "not enabled for your account".
+// https://api.docs.cpanel.net/guides/liveapi/getting-started/
+$liveapi_token = trim((string) fgets(STDIN));
+print strlen($liveapi_token) . "\n" . $liveapi_token . "\n";
+
 $autoload = '/usr/local/cpanel/3rdparty/zonemirror/vendor/autoload.php';
 if (!is_file($autoload)) {
     http_response_code(500);
