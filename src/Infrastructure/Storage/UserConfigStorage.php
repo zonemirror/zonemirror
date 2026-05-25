@@ -203,6 +203,22 @@ final class UserConfigStorage
 
             throw new RuntimeException('Unable to install user config.');
         }
+
+        // The daemon writes this file too (e.g. when transitioning the
+        // sync_state from pending_diff to awaiting_review). Its tmp+rename
+        // leaves the inode owned by root, which the cPanel-user LSPHP then
+        // can't read — config silently falls back to empty() and the UI
+        // shows "disconnected" while the user is in fact connected. Chown
+        // explicitly when we're running as root.
+        if (function_exists('posix_geteuid') && posix_geteuid() === 0
+            && function_exists('posix_getpwnam')
+        ) {
+            $pw = @posix_getpwnam($user);
+            if (is_array($pw) && isset($pw['uid'], $pw['gid'])) {
+                @chown($path, (int) $pw['uid']);
+                @chgrp($path, (int) $pw['gid']);
+            }
+        }
     }
 
     /**
