@@ -94,10 +94,15 @@ stage_files() {
   fi
 
   # WHM addon-plugin listing icon. The "inverted" variant has colors that
-  # contrast with WHM's dark sidebar.
+  # contrast with WHM's dark sidebar; the regular variant goes alongside
+  # for the in-page brand header (white card background).
   if [[ -f "$src_root/resources/assets/zonemirror-icon-inverted.png" ]]; then
     install -m 0644 "$src_root/resources/assets/zonemirror-icon-inverted.png" \
       "$WHM_ADDON_PLUGINS_DIR/${PLUGIN_ID}.png"
+  fi
+  if [[ -f "$src_root/resources/assets/zonemirror-icon.png" ]]; then
+    install -m 0644 "$src_root/resources/assets/zonemirror-icon.png" \
+      "$WHM_ADDON_PLUGINS_DIR/${PLUGIN_ID}-light.png"
   fi
 
   # Legacy paths some templated themes still hit. Cheap to ship.
