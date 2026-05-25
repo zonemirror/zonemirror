@@ -14,6 +14,8 @@ UPDATER_SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.service"
 UPDATER_TIMER_PATH="/etc/systemd/system/${SERVICE_NAME}-updater.timer"
 LIVEAPI_DIR="/usr/local/cpanel/base/frontend/jupiter/${PLUGIN_ID}"
 WHM_DIR="/usr/local/cpanel/whostmgr/docroot/cgi/${PLUGIN_ID}"
+ICON_TARGET_DIR="/usr/local/cpanel/base/unprotected/${PLUGIN_ID}"
+DYNAMICUI_CONF="/usr/local/cpanel/base/frontend/jupiter/dynamicui/dynamicui_${PLUGIN_ID}.conf"
 CLI_SYMLINK="/usr/local/bin/zonemirror"
 
 PURGE=false
@@ -39,8 +41,8 @@ fi
 
 /usr/local/cpanel/bin/unregister_cpanelplugin "$PREFIX/packaging/zonemirror.cpanelplugin" 2>/dev/null || true
 
-rm -f "$CLI_SYMLINK"
-rm -rf "$PREFIX" "$LIVEAPI_DIR" "$WHM_DIR"
+rm -f "$CLI_SYMLINK" "$DYNAMICUI_CONF"
+rm -rf "$PREFIX" "$LIVEAPI_DIR" "$WHM_DIR" "$ICON_TARGET_DIR"
 
 if $PURGE; then
   rm -rf "$SYSTEM_DIR"
