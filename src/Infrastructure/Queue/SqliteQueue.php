@@ -162,6 +162,36 @@ final class SqliteQueue
         return (int) ($row['n'] ?? 0);
     }
 
+    /**
+     * Idempotency keys of every pending (not dead-lettered) event, oldest
+     * first. The UI uses these to map "still-in-flight" events back to the
+     * cards the user just submitted so it can show per-row applying/done
+     * state without exposing the full record payload.
+     *
+     * Capped at 500 to keep the JSON poll response bounded; a UI batch
+     * larger than that will simply not get per-card precision (the
+     * aggregate progress bar still works).
+     *
+     * @return list<string>
+     */
+    public function pendingKeys(int $limit = 500): array
+    {
+        $stmt = $this->pdo()->prepare(
+            'SELECT idempotency_key
+             FROM events
+             WHERE dead_at IS NULL
+             ORDER BY id ASC
+             LIMIT ?'
+        );
+        $stmt->execute([$limit]);
+        $out = [];
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $out[] = (string) ($row['idempotency_key'] ?? '');
+        }
+
+        return $out;
+    }
+
     private function pdo(): PDO
     {
         if ($this->pdo !== null) {
