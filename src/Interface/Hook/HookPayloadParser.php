@@ -38,6 +38,138 @@ final class HookPayloadParser
     }
 
     /**
+     * Normalise a record extracted from a UAPI DNS::mass_edit_zone payload
+     * (the only DNS-mutating hookpoint that fires from modern cPanel/
+     * Jupiter) into the historical legacy ZoneEdit shape — i.e. the keys
+     * CpanelToCloudflareMapper already understands.
+     *
+     * The mass_edit shape is:
+     *
+     *   { "dname": "_dmarc", "ttl": 300, "record_type": "TXT",
+     *     "data": ["dmFsdWUgYmFzZTY0"] }
+     *
+     * `data` carries the rrtype-specific fields in BIND order, as plain
+     * strings (NOT base64 — the `parse_zone` output uses `data_b64` for
+     * transport but `mass_edit_zone` input takes raw strings and writes
+     * them verbatim to the zone file):
+     *
+     *   A / AAAA / NS / CNAME / PTR  -> [target]
+     *   MX                           -> [preference, exchange]
+     *   TXT                          -> [chunk1, chunk2, ...]  (concat)
+     *   SRV                          -> [priority, weight, port, target]
+     *   CAA                          -> [flags, tag, value]
+     *   SOA                          -> we ignore (authoritative-side)
+     *
+     * @param array<string, mixed> $rec
+     * @return array<string, mixed>|null
+     */
+    public static function normaliseDnsMassEditRecord(array $rec): ?array
+    {
+        $type = strtoupper((string) ($rec['record_type'] ?? ''));
+        if ($type === '') {
+            return null;
+        }
+        $name = (string) ($rec['dname'] ?? '');
+        if ($name === '') {
+            return null;
+        }
+        $ttl = (int) ($rec['ttl'] ?? 0);
+        $rawData = is_array($rec['data'] ?? null) ? $rec['data'] : [];
+        $data = array_map(static fn ($v): string => (string) $v, $rawData);
+
+        $out = ['type' => $type, 'name' => $name, 'ttl' => $ttl];
+
+        switch ($type) {
+            case 'A':
+            case 'AAAA':
+                $out['address'] = $data[0] ?? '';
+
+                return $out;
+            case 'CNAME':
+                $out['cname'] = $data[0] ?? '';
+
+                return $out;
+            case 'NS':
+                // The mapper drops NS anyway (authoritative on Cloudflare).
+                return null;
+            case 'MX':
+                $out['preference'] = (int) ($data[0] ?? 10);
+                $out['exchange']   = $data[1] ?? '';
+
+                return $out;
+            case 'TXT':
+                // BIND splits long TXT into 255-byte chunks. Cloudflare
+                // wants the concatenation — TXT semantically is one
+                // string regardless of the wire-level chunking.
+                $out['txtdata'] = implode('', $data);
+
+                return $out;
+            case 'SRV':
+                $out['priority'] = (int) ($data[0] ?? 0);
+                $out['weight']   = (int) ($data[1] ?? 0);
+                $out['port']     = (int) ($data[2] ?? 0);
+                $out['target']   = $data[3] ?? '';
+
+                return $out;
+            case 'CAA':
+                $out['flag']  = (int) ($data[0] ?? 0);
+                $out['tag']   = $data[1] ?? 'issue';
+                $out['value'] = $data[2] ?? '';
+
+                return $out;
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * The `add` / `edit` / `remove` fields in a DNS::mass_edit_zone payload
+     * can arrive as a single JSON string OR as a list of JSON strings (or
+     * a list of integers, for `remove`) depending on the caller. This
+     * normalises every shape into a list and JSON-decodes string entries.
+     *
+     * @return list<array<string, mixed>|int>
+     */
+    public static function decodeMassEditField(mixed $field): array
+    {
+        if ($field === null || $field === '') {
+            return [];
+        }
+        $items = is_array($field) ? array_values($field) : [$field];
+        $out = [];
+        foreach ($items as $it) {
+            if (is_array($it)) {
+                $out[] = $it;
+
+                continue;
+            }
+            if (is_int($it)) {
+                $out[] = $it;
+
+                continue;
+            }
+            if (is_string($it)) {
+                $trim = trim($it);
+                if ($trim === '') {
+                    continue;
+                }
+                // remove= is always a stringified line_index.
+                if (ctype_digit($trim)) {
+                    $out[] = (int) $trim;
+
+                    continue;
+                }
+                $decoded = json_decode($trim, true);
+                if (is_array($decoded)) {
+                    $out[] = $decoded;
+                }
+            }
+        }
+
+        return $out;
+    }
+
+    /**
      * Build a stable idempotency key from action + domain + record shape so
      * duplicate cPanel hook fires (e.g. cPanel retries on transient errors)
      * collapse into a single Cloudflare call.

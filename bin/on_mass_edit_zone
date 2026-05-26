@@ -4,48 +4,203 @@
 declare(strict_types=1);
 
 /**
- * mass_edit_zone fires once with an array of record edits. We fan them out
- * to per-record upserts so the queue stays one-event-per-record (matches the
- * idempotency-key contract used elsewhere).
+ * Post-hook for UAPI DNS::mass_edit_zone (the only DNS-mutating
+ * endpoint Jupiter's Zone Editor actually calls) and Api2
+ * ZoneEdit::mass_edit_zone (legacy callers). We never see add /
+ * edit / remove as separate hookpoints any more — they're all
+ * batched under mass_edit_zone — so this script fans the batch out
+ * into per-record queue events.
+ *
+ * For UAPI DNS::mass_edit_zone the payload looks like:
+ *
+ *   data:
+ *     args:
+ *       zone: "example.com"
+ *       add: '{"dname":"_dmarc","ttl":300,"record_type":"TXT","data":["dmFsdWU="]}'
+ *       edit: '{"line_index":42,"dname":"www","ttl":1,"record_type":"A","data":["MS4yLjMuNA=="]}'
+ *       remove: "87"
+ *     result: { new_serial: "..." }
+ *
+ * `add` / `edit` can be a single JSON string or a list; `remove` is
+ * always a list of line_index integers. For add/edit we have the full
+ * record and enqueue Upserts directly. For remove the post-hook only
+ * sees the line_index — the local zone file has already been mutated —
+ * so we can't reconstruct which Cloudflare row to delete; we flip
+ * sync_state to pending_diff and let the daemon's ComputeDiff pick the
+ * delete up on the next cycle.
  */
 
+use ZoneMirror\Domain\DnsEvent;
 use ZoneMirror\Domain\EventAction;
-use ZoneMirror\Interface\Hook\HookHandler;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Logging\LogLevel;
+use ZoneMirror\Infrastructure\Mapping\CpanelToCloudflareMapper;
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
+use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\KeyStore;
+use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
+use ZoneMirror\Infrastructure\Storage\UserConfigMetadataReader;
+use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
+use ZoneMirror\Interface\Hook\HookPayloadParser;
 
 $autoload = __DIR__ . '/../vendor/autoload.php';
 if (!is_file($autoload)) {
-    exit(0);
+    exit(0); // Never crash cPanel hooks.
 }
 require $autoload;
 
 $raw = stream_get_contents(STDIN);
 $payload = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
-$user = (string) (posix_getpwuid(posix_geteuid())['name'] ?? '');
-
 if (!is_array($payload)) {
     exit(0);
 }
 
-$data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
-$resultData = is_array($data['result']['data'] ?? null) ? $data['result']['data'] : [];
-$args = is_array($data['args'] ?? null) ? $data['args'] : [];
+$user = (string) (posix_getpwuid(posix_geteuid())['name'] ?? '');
+if ($user === '' || $user === 'root') {
+    exit(0);
+}
 
-$handler = new HookHandler(EventAction::Upsert, 'ZoneEdit::mass_edit_zone');
+$log = new FileLogger(Paths::userLogFile($user), LogLevel::Info);
 
-if (isset($resultData[0]) && is_array($resultData[0])) {
-    foreach ($resultData as $record) {
-        if (!is_array($record)) {
-            continue;
-        }
-        $sub = [
-            'data' => [
-                'args' => $args,
-                'result' => ['data' => $record],
-            ],
-        ];
-        $handler->handle($sub, $user);
+try {
+    $meta = UserConfigMetadataReader::read($user);
+    $hasCredentialPath = $meta['has_token']
+        || $meta['source'] === UserConfigStorage::SOURCE_ADMIN;
+    if (!$meta['enabled'] || $meta['zone_id'] === '' || !$hasCredentialPath) {
+        exit(0);
     }
-} else {
-    $handler->handle($payload, $user);
+
+    $systemStorage = new SystemConfigStorage();
+    if (!$systemStorage->isUserAllowed($user)) {
+        exit(0);
+    }
+    $systemDefaults = $systemStorage->load();
+    $defaults = [
+        'proxied'  => $meta['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
+        'ttl'      => $systemDefaults['defaults']['ttl'],
+        'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
+    ];
+
+    $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+    $args = is_array($data['args'] ?? null) ? $data['args'] : [];
+    $domain = (string) ($args['zone'] ?? $args['domain'] ?? '');
+    if ($domain === '') {
+        exit(0);
+    }
+
+    // Only sync events for the user's connected zone. cPanel scopes the
+    // hook by user, but a user with multiple addon domains may edit a
+    // zone that ZoneMirror is not configured to mirror.
+    if (strcasecmp(rtrim($domain, '.'), rtrim($meta['zone_name'], '.')) !== 0) {
+        exit(0);
+    }
+
+    $isUapiDns = strcasecmp((string) ($args['cpanel_jsonapi_module'] ?? ''), 'DNS') === 0
+        || isset($args['add']) || isset($args['edit']) || isset($args['remove']);
+
+    if (!$isUapiDns) {
+        // Legacy Api2 ZoneEdit::mass_edit_zone path. The result-data shape
+        // was the per-record array; fall back to the old extract() route.
+        $resultData = is_array($data['result']['data'] ?? null) ? $data['result']['data'] : [];
+        $records = (isset($resultData[0]) && is_array($resultData[0])) ? $resultData : [$resultData];
+        $mapper = new CpanelToCloudflareMapper();
+        $queue = new SqliteQueue($user);
+        foreach ($records as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+            $dns = $mapper->map($record, $defaults);
+            if ($dns === null) {
+                continue;
+            }
+            $queue->enqueue(new DnsEvent(
+                domain: $domain,
+                action: EventAction::Upsert,
+                record: $dns,
+                idempotencyKey: HookPayloadParser::idempotencyKey('upsert', $domain, $record),
+                createdAt: time(),
+            ));
+        }
+        exit(0);
+    }
+
+    // UAPI DNS::mass_edit_zone path.
+    $mapper = new CpanelToCloudflareMapper();
+    $queue = new SqliteQueue($user);
+    $now = time();
+    $upserted = 0;
+    $removeCount = 0;
+
+    foreach (['add', 'edit'] as $key) {
+        foreach (HookPayloadParser::decodeMassEditField($args[$key] ?? null) as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $normalised = HookPayloadParser::normaliseDnsMassEditRecord($item);
+            if ($normalised === null) {
+                continue;
+            }
+            $dns = $mapper->map($normalised, $defaults);
+            if ($dns === null) {
+                continue;
+            }
+            $queue->enqueue(new DnsEvent(
+                domain: $domain,
+                action: EventAction::Upsert,
+                record: $dns,
+                idempotencyKey: HookPayloadParser::idempotencyKey('upsert', $domain, $normalised),
+                createdAt: $now,
+            ));
+            $upserted++;
+        }
+    }
+
+    // Removes: cPanel only gives us a line_index, which is meaningless
+    // post-mutation. We can't enqueue a Delete event because the daemon
+    // needs (type, name) to look up the CF record id. Instead, flip the
+    // sync_state so the daemon's next cycle recomputes the diff and the
+    // remove surfaces as a `cloudflare_only` row the user (or a future
+    // auto-prune policy) can act on.
+    $removes = HookPayloadParser::decodeMassEditField($args['remove'] ?? null);
+    if ($removes !== []) {
+        $removeCount = count($removes);
+        $storage = new UserConfigStorage(
+            new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
+        );
+        $cfg = $storage->load($user);
+        if ($cfg['enabled']) {
+            $storage->save($user, [
+                'enabled'    => $cfg['enabled'],
+                'zone_id'    => $cfg['zone_id'],
+                'zone_name'  => $cfg['zone_name'],
+                'defaults'   => $cfg['defaults'],
+                'source'     => $cfg['source'],
+                'token'      => $cfg['token'],
+                'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
+            ]);
+        }
+    }
+
+    if ($upserted > 0 || $removeCount > 0) {
+        $log->info('mass_edit_zone hook fanned out', [
+            'user'     => $user,
+            'domain'   => $domain,
+            'upserted' => $upserted,
+            'removes'  => $removeCount,
+        ]);
+    }
+} catch (Throwable $e) {
+    // Never propagate — cPanel hooks must not break the UI flow.
+    @file_put_contents(
+        Paths::userLogFile($user),
+        json_encode([
+            'ts'    => date('c'),
+            'level' => 'error',
+            'msg'   => 'mass_edit_zone hook failed',
+            'ctx'   => ['error' => $e->getMessage()],
+        ]) . "\n",
+        FILE_APPEND
+    );
 }
 exit(0);
