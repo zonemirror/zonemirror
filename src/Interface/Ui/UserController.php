@@ -61,6 +61,7 @@ use ZoneMirror\Infrastructure\Storage\ZoneIndex;
  *     test_result: ?string,
  *     domains: list<DomainStatus>,
  *     diff: array<string, mixed>|null,
+ *     locks: array<string, array{scope: string, type: string, name: string, content: ?string, priority: ?int, reason: string, created_at: int}>,
  *     locks_count: int
  * }
  */
@@ -152,6 +153,10 @@ final class UserController
                     [$saved, $errors, $message] = $this->applySelected($user, $post);
                 } elseif ($action === 'toggle_lock') {
                     [$saved, $errors, $message] = $this->toggleLock($user, $post);
+                } elseif ($action === 'add_lock') {
+                    [$saved, $errors, $message] = $this->addLock($user, $post);
+                } elseif ($action === 'remove_lock') {
+                    [$saved, $errors, $message] = $this->removeLock($user, $post);
                 } elseif ($action === 'test') {
                     $testResult = $this->testConnection(
                         (string) ($post['token'] ?? ''),
@@ -179,22 +184,34 @@ final class UserController
         $diff = $cfg['enabled'] ? (new DiffStorage())->load($user) : null;
         $locks = $cfg['enabled'] ? (new LockStorage())->all($user) : [];
 
-        // Annotate each diff entry with whether the user has locked it.
-        // The template uses this to render the padlock affordance and to
-        // hide the apply checkbox on locked rows. Cheap to compute here
-        // (set membership over a small hash table) and keeps the
-        // template free of LockStorage knowledge.
+        // Annotate each diff entry with whether ANY lock matches it. A
+        // single record can be covered by several locks at once (e.g. a
+        // zone-wide lock AND a per-record exact lock) — we list every
+        // matching lock id on the entry so the UI can show "this is
+        // locked because of the zone lock" instead of a blanket padlock
+        // the user can't trace back. The type_name lock id keeps living
+        // on the entry too so the card's quick-toggle padlock still
+        // round-trips with the same id whether locked or not.
         if (is_array($diff) && isset($diff['entries']) && is_array($diff['entries'])) {
             foreach ($diff['entries'] as $i => $entry) {
                 if (!is_array($entry)) {
                     continue;
                 }
-                $lockId = LockStorage::lockIdForEntry($entry);
-                $diff['entries'][$i]['lock_id'] = $lockId;
-                $diff['entries'][$i]['locked']  = isset($locks[$lockId]);
-                if (isset($locks[$lockId]['reason'])) {
-                    $diff['entries'][$i]['lock_reason'] = (string) $locks[$lockId]['reason'];
+                $quickLockId = LockStorage::lockIdForEntry($entry, LockStorage::SCOPE_TYPE_NAME);
+                $matchedIds = [];
+                $matchedReasons = [];
+                foreach ($locks as $lockId => $lock) {
+                    if (LockStorage::entryMatches($lock, $entry)) {
+                        $matchedIds[] = $lockId;
+                        if (($lock['reason'] ?? '') !== '') {
+                            $matchedReasons[] = (string) $lock['reason'];
+                        }
+                    }
                 }
+                $diff['entries'][$i]['lock_id'] = $quickLockId;
+                $diff['entries'][$i]['locked']  = $matchedIds !== [];
+                $diff['entries'][$i]['lock_matched_ids'] = $matchedIds;
+                $diff['entries'][$i]['lock_reason'] = $matchedReasons === [] ? '' : implode('; ', $matchedReasons);
             }
         }
 
@@ -218,6 +235,7 @@ final class UserController
             'test_result' => $testResult,
             'domains' => $this->buildDomainsStatus($allDomains, $cfg),
             'diff' => $diff,
+            'locks' => $locks,
             'locks_count' => count($locks),
         ];
     }
@@ -451,22 +469,20 @@ final class UserController
 
         // Locks gate: even if the user (or a bulk-select) ticked a row
         // they've previously protected, drop it here so no Upsert/Delete
-        // ever escapes the controller. We record the dropped keys
-        // separately so the AJAX response can tell the UI "we ignored
-        // these on purpose, the cards still need their padlock".
+        // ever escapes the controller. The match is against any lock in
+        // the table — zone-wide, subtree, name, type_name, or exact —
+        // so a single coarse lock can shield a whole branch of rows
+        // from a fat-fingered bulk apply.
         $locks = (new LockStorage())->all($user);
         $blockedByLock = [];
         $filter = function (array $keys) use (&$blockedByLock, $byKey, $locks): array {
             $out = [];
             foreach ($keys as $key) {
                 $entry = $byKey[$key] ?? null;
-                if (is_array($entry)) {
-                    $lockId = LockStorage::lockIdForEntry($entry);
-                    if (isset($locks[$lockId])) {
-                        $blockedByLock[] = $key;
+                if (is_array($entry) && LockStorage::entryMatchesAny($locks, $entry)) {
+                    $blockedByLock[] = $key;
 
-                        continue;
-                    }
+                    continue;
                 }
                 $out[] = $key;
             }
@@ -628,11 +644,10 @@ final class UserController
     }
 
     /**
-     * Toggle a per-record lock. The POST carries the diff entry key
-     * (data-key on the card) — we look the entry up, compute the
-     * content-hash lock id, and either add or remove the lock based on
-     * the current state. Optionally accepts a `reason` for human
-     * context.
+     * Quick-toggle (used by the padlock button on each card): flips a
+     * SCOPE_TYPE_NAME lock for the row the user clicked on. The fine-
+     * grained scopes (zone / subtree / name / exact) go through the
+     * Manage Locks panel and addLock() below.
      *
      * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
@@ -665,28 +680,102 @@ final class UserController
             return [false, ['Record not found in current diff.'], ''];
         }
 
-        $lockId  = LockStorage::lockIdForEntry($entry);
         $storage = new LockStorage();
-        $reason  = trim((string) ($post['reason'] ?? ''));
+        $lockId  = LockStorage::lockIdForEntry($entry, LockStorage::SCOPE_TYPE_NAME);
 
-        if ($storage->isLocked($user, $lockId)) {
+        if ($storage->isLockedById($user, $lockId)) {
             $storage->remove($user, $lockId);
             $msg = sprintf('Lock removed from %s %s.', (string) ($entry['type'] ?? ''), (string) ($entry['name'] ?? ''));
         } else {
-            $source = is_array($entry['local'] ?? null)
-                ? $entry['local']
-                : (is_array($entry['remote'] ?? null) ? $entry['remote'] : []);
             $storage->add(
                 user: $user,
-                type: (string) ($entry['type'] ?? ($source['type'] ?? '')),
-                name: (string) ($entry['name'] ?? ($source['name'] ?? '')),
-                content: isset($source['content']) ? (string) $source['content'] : null,
-                reason: $reason,
+                scope: LockStorage::SCOPE_TYPE_NAME,
+                type: (string) ($entry['type'] ?? ''),
+                name: (string) ($entry['name'] ?? ''),
+                reason: trim((string) ($post['reason'] ?? '')),
             );
             $msg = sprintf('Lock added to %s %s.', (string) ($entry['type'] ?? ''), (string) ($entry['name'] ?? ''));
         }
 
         return [true, [], $msg];
+    }
+
+    /**
+     * Add a lock with an explicit scope. Used by the "Manage Locks"
+     * panel where the user picks zone / subtree / name / type_name /
+     * exact from a dropdown and fills the criteria fields that apply.
+     *
+     * @param array<string, mixed> $post
+     * @return array{0: bool, 1: list<string>, 2: string}
+     */
+    private function addLock(string $user, array $post): array
+    {
+        $cfg = $this->storageFor($user)->load($user);
+        if (!$cfg['enabled']) {
+            return [false, ['No domain connected.'], ''];
+        }
+
+        $scope = trim((string) ($post['scope'] ?? ''));
+        if (!in_array($scope, LockStorage::SCOPES, true)) {
+            return [false, ['Invalid lock scope.'], ''];
+        }
+        $type     = trim((string) ($post['type']     ?? ''));
+        $name     = trim((string) ($post['name']     ?? ''));
+        $content  = $post['content'] ?? null;
+        $contentStr = is_string($content) ? $content : null;
+        $priority = isset($post['priority']) && $post['priority'] !== '' ? (int) $post['priority'] : null;
+        $reason   = trim((string) ($post['reason'] ?? ''));
+
+        // For SCOPE_ZONE the name is implicit (the connected zone);
+        // for SCOPE_SUBTREE / SCOPE_NAME the user may pass the apex by
+        // typing the zone name itself, which we accept verbatim.
+        if ($scope === LockStorage::SCOPE_ZONE) {
+            $type = '';
+            $name = '';
+            $contentStr = null;
+            $priority = null;
+        }
+
+        try {
+            $id = (new LockStorage())->add(
+                user: $user,
+                scope: $scope,
+                type: $type,
+                name: $name,
+                content: $contentStr,
+                priority: $priority,
+                reason: $reason,
+            );
+        } catch (\InvalidArgumentException $e) {
+            return [false, [$e->getMessage()], ''];
+        }
+
+        return [true, [], sprintf('Lock added (%s).', $id)];
+    }
+
+    /**
+     * Remove a lock by id. The Manage Locks panel emits this with the
+     * id pulled straight from the rendered list.
+     *
+     * @param array<string, mixed> $post
+     * @return array{0: bool, 1: list<string>, 2: string}
+     */
+    private function removeLock(string $user, array $post): array
+    {
+        $cfg = $this->storageFor($user)->load($user);
+        if (!$cfg['enabled']) {
+            return [false, ['No domain connected.'], ''];
+        }
+        $lockId = trim((string) ($post['lock_id'] ?? ''));
+        if ($lockId === '') {
+            return [false, ['Missing lock id.'], ''];
+        }
+        $ok = (new LockStorage())->remove($user, $lockId);
+        if (!$ok) {
+            return [false, ['Lock not found.'], ''];
+        }
+
+        return [true, [], 'Lock removed.'];
     }
 
     /**
