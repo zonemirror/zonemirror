@@ -479,7 +479,19 @@ if ($autoRefresh) {
     border-radius: 4px; font-family: inherit;
   }
   .zm-lock-btn:hover { background: rgba(0,0,0,0.05); color: #555; }
-  .zm-lock-btn .zm-lock-icon { font-size: 0.95em; }
+  .zm-lock-btn .zm-lock-icon { font-size: 0.95em; line-height: 1; }
+  /* Icon glyph is content: ::before so the same markup can preview
+     the post-click state on hover. Mapping:
+       unlocked, rest  → 🔓
+       unlocked, hover → 🔒 (closing it is what a click does)
+       locked,   rest  → 🔒
+       locked,   hover → 🔓 (opening it is what a click does) */
+  .zm-lock-btn[data-locked="0"] .zm-lock-icon::before { content: "🔓"; }
+  .zm-lock-btn[data-locked="1"] .zm-lock-icon::before { content: "🔒"; }
+  .zm-lock-btn[data-locked="0"]:hover .zm-lock-icon::before,
+  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-icon::before { content: "🔒"; }
+  .zm-lock-btn[data-locked="1"]:hover .zm-lock-icon::before,
+  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-icon::before { content: "🔓"; }
   .zm-lock-btn[data-locked="1"] {
     color: #6b4c00; background: #fff8e1; border: 1px solid #f4ce6e;
   }
@@ -1678,13 +1690,10 @@ if ($autoRefresh) {
     var wasLocked = btn.getAttribute('data-locked') === '1';
     var nowLocked = !wasLocked;
 
-    // Optimistic update.
+    // Optimistic update. The icon glyph itself is driven by CSS off
+    // data-locked, so we only need to flip the attribute.
     btn.setAttribute('data-locked', nowLocked ? '1' : '0');
     card.setAttribute('data-locked', nowLocked ? '1' : '0');
-    var icon = btn.querySelector('.zm-lock-icon');
-    if (icon) {
-      icon.textContent = nowLocked ? '🔒' : '🔓';
-    }
     var label = btn.querySelector('.zm-lock-label');
     if (label) label.textContent = nowLocked ? 'Locked' : '';
     // Hide / show the matching apply checkbox; identical cards already
@@ -1724,9 +1733,6 @@ if ($autoRefresh) {
       // Revert on failure.
       btn.setAttribute('data-locked', wasLocked ? '1' : '0');
       card.setAttribute('data-locked', wasLocked ? '1' : '0');
-      if (icon) {
-        icon.textContent = wasLocked ? '🔒' : '🔓';
-      }
       if (label) label.textContent = wasLocked ? 'Locked' : '';
       if (cb && card.dataset.status !== 'identical') {
         cb.style.visibility = '';
@@ -1925,9 +1931,14 @@ function zm_render_card(array $e, callable $h): string
     // it's visible without expanding the body. The JS controller wires
     // up the click to an AJAX toggle_lock POST; on success the card
     // gains/loses data-locked and the checkbox is suppressed.
+    // The icon glyph is injected from CSS via ::before so the same
+    // markup can preview the post-click state on hover (closed lock
+    // when you're about to lock, open lock when you're about to
+    // unlock). Jupiter's glyphicon set is missing glyphicon-unchecked,
+    // hence the emoji pair — renders natively on every modern OS.
     $lockBtn = sprintf(
         '<button type="button" class="zm-lock-btn" data-key="%s" data-locked="%s" title="%s">'
-        . '<span class="zm-lock-icon" aria-hidden="true">%s</span>'
+        . '<span class="zm-lock-icon" aria-hidden="true"></span>'
         . '<span class="zm-lock-label">%s</span>'
         . '</button>',
         $h($key),
@@ -1935,11 +1946,6 @@ function zm_render_card(array $e, callable $h): string
         $h($locked
             ? ($lockReason !== '' ? 'Locked: ' . $lockReason : 'Locked — ZoneMirror will not sync this row')
             : 'Click to lock this row (ZoneMirror will skip it on every apply)'),
-        // Unicode padlock pair — Jupiter's glyphicon set doesn't ship
-        // glyphicon-unchecked (only glyphicon-check) so we can't pair a
-        // locked/unlocked icon from there. Emojis render natively in
-        // every modern OS and don't depend on the chrome's font.
-        $locked ? '🔒' : '🔓',
         $locked ? 'Locked' : '',
     );
 
