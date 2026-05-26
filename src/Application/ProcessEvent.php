@@ -73,7 +73,27 @@ final class ProcessEvent
 
                 return SyncResult::Skipped;
             }
-            $created = $this->client->createRecord($zoneId, $payload);
+
+            try {
+                $created = $this->client->createRecord($zoneId, $payload);
+            } catch (CloudflareException $e) {
+                // Cloudflare 81058 = identical record already exists. Happens
+                // when our snapshot is stale (someone created the same row
+                // in the dashboard between Compute Diff and Apply, or two
+                // pushes raced). Desired state == actual state, so swallow
+                // it; the next worker cycle's snapshot refresh will pick up
+                // the existing record.
+                if ($e->cloudflareCode === CloudflareException::CODE_DUPLICATE_RECORD) {
+                    $this->log->info('create skipped: identical record already exists', [
+                        'type' => $record->type->value,
+                        'name' => $record->name,
+                    ]);
+
+                    return SyncResult::NoChange;
+                }
+
+                throw $e;
+            }
             $snapshot->applyCreate($created);
             $this->log->info('created record', ['type' => $record->type->value, 'name' => $record->name]);
 
