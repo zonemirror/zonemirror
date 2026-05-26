@@ -344,11 +344,11 @@ final class WorkerLoop
                 continue;
             }
             // The lock gate also covers ACME challenges. It would be
-            // exotic for a human to lock an opaque DCV token, but if
-            // they did we should still honour it — the contract is
-            // "lock means do not touch", no exceptions.
-            $lockId = LockStorage::lockIdForEntry($entry);
-            if (isset($locks[$lockId])) {
+            // exotic for a human to lock an opaque DCV token, but a
+            // coarse SCOPE_ZONE or SCOPE_SUBTREE lock can easily catch
+            // one by accident — the contract is "lock means do not
+            // touch", no exceptions.
+            if (LockStorage::entryMatchesAny($locks, $entry)) {
                 $lockedSkipped++;
 
                 continue;

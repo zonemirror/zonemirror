@@ -416,6 +416,58 @@ if ($autoRefresh) {
     color: #c53030; font-size: 0.8em; font-weight: 600;
   }
 
+  /* Manage Locks panel — slides open under the connected-domain banner.
+     Lists every active lock and exposes a form to add a new one with an
+     explicit scope. Designed as a disclosure: starts hidden, the button
+     in the banner toggles it. */
+  .zm-locks-count {
+    display: inline-block; min-width: 1.4em; padding: 0 0.4em;
+    border-radius: 999px; background: rgba(0,0,0,0.1); color: #666;
+    font-size: 0.78em; font-weight: 600; margin-left: 0.35rem;
+  }
+  .zm-locks-count.has-locks { background: #c8a73b; color: #fff; }
+  .zm-locks-panel {
+    background: #fffaeb; border: 1px solid #f4ce6e; border-radius: 6px;
+    padding: 0.9rem 1.1rem; margin-bottom: 1rem;
+  }
+  .zm-locks-panel-head { margin-bottom: 0.5rem; }
+  .zm-locks-panel-head .zm-muted { color: #777; font-size: 0.88em; margin-left: 0.4rem; }
+  .zm-muted { color: #777; }
+  .zm-locks-list { list-style: none; padding: 0; margin: 0 0 0.75rem; }
+  .zm-lock-row {
+    display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0;
+    border-bottom: 1px dashed #f0d990; font-size: 0.92em;
+  }
+  .zm-lock-row:last-child { border-bottom: 0; }
+  .zm-lock-row code {
+    background: rgba(0,0,0,0.05); padding: 0.05em 0.4em;
+    border-radius: 3px; font-size: 0.92em;
+  }
+  .zm-lock-criteria { flex: 1 1 auto; color: #444; }
+  .zm-pill-scope {
+    background: #f4e3a8; color: #6b4c00; text-transform: uppercase;
+    letter-spacing: 0.04em; font-size: 0.72em;
+  }
+  .zm-pill-scope-zone     { background: #d9534f; color: #fff; }
+  .zm-pill-scope-subtree  { background: #f0ad4e; color: #fff; }
+  .zm-pill-scope-name     { background: #f4ce6e; color: #6b4c00; }
+  .zm-pill-scope-type_name{ background: #f4e3a8; color: #6b4c00; }
+  .zm-pill-scope-exact    { background: #b6ecc2; color: #0a5f1f; }
+  .zm-lock-add-form { margin-top: 0.5rem; }
+  .zm-lock-add-row {
+    display: flex; gap: 0.6rem; align-items: flex-end;
+    flex-wrap: wrap; margin-top: 0.5rem;
+  }
+  .zm-lock-add-row label { display: flex; flex-direction: column; font-size: 0.85em; }
+  .zm-lock-add-row label .zm-muted { margin-bottom: 0.15rem; }
+  .zm-lock-add-row input[type="text"],
+  .zm-lock-add-row input[type="number"],
+  .zm-lock-add-row select {
+    padding: 0.4rem 0.5rem; border: 1px solid #ccc; border-radius: 4px;
+    font-size: 0.95em;
+  }
+  .zm-lock-add-row label[data-scope-field][hidden] { display: none; }
+
   /* Lock affordance per card. Click to flip; the JS controller fires
      an AJAX toggle_lock and rewrites data-locked on success. Locked
      cards get a slate border, faded body and their checkbox suppressed
@@ -491,6 +543,13 @@ if ($autoRefresh) {
         </div>
       </div>
       <div class="zm-btn-row">
+        <button type="button" class="btn btn-default" id="zm-locks-toggle"
+                aria-controls="zm-locks-panel" aria-expanded="false">
+          <span class="glyphicon glyphicon-lock" aria-hidden="true"></span>
+          Manage locks
+          <span class="zm-locks-count<?= $vm['locks_count'] > 0 ? ' has-locks' : '' ?>"
+                id="zm-locks-count"><?= (int) $vm['locks_count'] ?></span>
+        </button>
         <form method="post" data-zm-form="refresh">
           <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
           <input type="hidden" name="action" value="refresh_diff">
@@ -503,6 +562,96 @@ if ($autoRefresh) {
           <button type="submit" class="btn btn-default">Disconnect</button>
         </form>
       </div>
+    </div>
+
+    <?php /* ─── Manage Locks panel ────────────────────────────────────
+            Slides open below the banner. Lists every active lock with
+            its scope/criteria + a remove button, plus a tiny form to
+            add a new lock by picking scope from a dropdown. Scope
+            controls which fields are required (the JS hides what
+            doesn't apply when scope changes). */ ?>
+    <div id="zm-locks-panel" class="zm-locks-panel" hidden>
+      <div class="zm-locks-panel-head">
+        <strong>Locked records</strong>
+        <span class="zm-muted">ZoneMirror skips every push or delete that matches one of these.</span>
+      </div>
+      <?php if ($vm['locks_count'] === 0): ?>
+        <p class="zm-muted" id="zm-locks-empty" style="margin: 0.5rem 0 0.75rem;">
+          No locks yet. Add one below or click the padlock on any diff card.
+        </p>
+      <?php endif; ?>
+      <ul class="zm-locks-list" id="zm-locks-list">
+        <?php foreach ($vm['locks'] as $lockId => $lock): ?>
+          <li class="zm-lock-row" data-lock-id="<?= $h($lockId) ?>">
+            <span class="zm-pill zm-pill-scope zm-pill-scope-<?= $h($lock['scope']) ?>"><?= $h($lock['scope']) ?></span>
+            <span class="zm-lock-criteria">
+              <?php if ($lock['scope'] === 'zone'): ?>
+                <em>entire zone</em>
+              <?php elseif ($lock['scope'] === 'subtree'): ?>
+                everything under <code><?= $h($lock['name']) ?></code>
+              <?php elseif ($lock['scope'] === 'name'): ?>
+                any record at <code><?= $h($lock['name']) ?></code>
+              <?php elseif ($lock['scope'] === 'type_name'): ?>
+                <code><?= $h($lock['type']) ?></code> at <code><?= $h($lock['name']) ?></code>
+              <?php elseif ($lock['scope'] === 'exact'): ?>
+                <code><?= $h($lock['type']) ?></code> at <code><?= $h($lock['name']) ?></code>
+                = <code><?= $h((string) $lock['content']) ?></code>
+                <?php if ($lock['priority'] !== null): ?>
+                  (priority <?= (int) $lock['priority'] ?>)
+                <?php endif; ?>
+              <?php endif; ?>
+              <?php if ($lock['reason'] !== ''): ?>
+                — <span class="zm-muted"><?= $h($lock['reason']) ?></span>
+              <?php endif; ?>
+            </span>
+            <button type="button" class="zm-link zm-link-muted zm-lock-remove" data-lock-id="<?= $h($lockId) ?>" title="Remove this lock">remove</button>
+          </li>
+        <?php endforeach; ?>
+      </ul>
+
+      <form id="zm-lock-add-form" class="zm-lock-add-form" autocomplete="off">
+        <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
+        <input type="hidden" name="action" value="add_lock">
+        <div class="zm-lock-add-row">
+          <label>
+            <span class="zm-muted">Scope</span>
+            <select name="scope" id="zm-lock-scope">
+              <option value="type_name">type + name (one record type at a name)</option>
+              <option value="name">name (any record type at this name)</option>
+              <option value="subtree">subtree (name + everything under it)</option>
+              <option value="exact">exact (type + name + content)</option>
+              <option value="zone">whole zone</option>
+            </select>
+          </label>
+          <label data-scope-field="type">
+            <span class="zm-muted">Type</span>
+            <select name="type">
+              <?php foreach (['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'SRV', 'CAA'] as $t): ?>
+                <option value="<?= $t ?>"><?= $t ?></option>
+              <?php endforeach; ?>
+            </select>
+          </label>
+          <label data-scope-field="name" style="flex: 1 1 220px;">
+            <span class="zm-muted">Name (FQDN)</span>
+            <input type="text" name="name" placeholder="<?= $h($vm['zone_name']) ?> or sub.<?= $h($vm['zone_name']) ?>" />
+          </label>
+          <label data-scope-field="content" style="flex: 1 1 220px;">
+            <span class="zm-muted">Content</span>
+            <input type="text" name="content" placeholder="(only for exact)" />
+          </label>
+          <label data-scope-field="priority" style="flex: 0 0 90px;">
+            <span class="zm-muted">Priority</span>
+            <input type="number" name="priority" placeholder="(MX only)" min="0" />
+          </label>
+        </div>
+        <div class="zm-lock-add-row">
+          <label style="flex: 1;">
+            <span class="zm-muted">Reason (optional)</span>
+            <input type="text" name="reason" placeholder="why is this locked" />
+          </label>
+          <button type="submit" class="btn btn-primary">Add lock</button>
+        </div>
+      </form>
     </div>
 
     <?php /* Live progress banner. Built on cPanel's native .alert markup so
@@ -1388,6 +1537,130 @@ if ($autoRefresh) {
       });
     });
   });
+
+  // ──── Manage Locks panel ───────────────────────────────────────────
+  // Toggle, scope-driven field visibility, add/remove via AJAX. The
+  // panel mirrors LockStorage's scopes: the scope dropdown decides
+  // which of {type, name, content, priority} the form requires.
+  var locksToggle = document.getElementById('zm-locks-toggle');
+  var locksPanel  = document.getElementById('zm-locks-panel');
+  var locksList   = document.getElementById('zm-locks-list');
+  var locksCount  = document.getElementById('zm-locks-count');
+  var lockAddForm = document.getElementById('zm-lock-add-form');
+  var lockScopeEl = document.getElementById('zm-lock-scope');
+
+  function updateLocksCount(n) {
+    if (!locksCount) return;
+    locksCount.textContent = String(n);
+    locksCount.classList.toggle('has-locks', n > 0);
+  }
+
+  function updateScopeFields() {
+    if (!lockAddForm || !lockScopeEl) return;
+    var s = lockScopeEl.value;
+    // Required field set per scope. Anything not in this set gets
+    // hidden so the form is honest about what's actually required.
+    var requires = {
+      zone:      [],
+      subtree:   ['name'],
+      name:      ['name'],
+      type_name: ['type', 'name'],
+      exact:     ['type', 'name', 'content'], // priority is optional MX-only
+    }[s] || [];
+    lockAddForm.querySelectorAll('[data-scope-field]').forEach(function (lab) {
+      var f = lab.getAttribute('data-scope-field');
+      var visible = requires.indexOf(f) !== -1
+        || (s === 'exact' && f === 'priority');
+      lab.hidden = !visible;
+    });
+  }
+
+  if (locksToggle && locksPanel) {
+    locksToggle.addEventListener('click', function () {
+      var open = !locksPanel.hidden;
+      locksPanel.hidden = open;
+      locksToggle.setAttribute('aria-expanded', open ? 'false' : 'true');
+      if (!open) updateScopeFields();
+    });
+  }
+  if (lockScopeEl) {
+    lockScopeEl.addEventListener('change', updateScopeFields);
+    updateScopeFields();
+  }
+
+  // Remove lock (delegated, so newly-added rows respond too).
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.zm-lock-remove');
+    if (!btn || !locksList || !locksList.contains(btn)) return;
+    e.preventDefault();
+    var lockId = btn.getAttribute('data-lock-id') || '';
+    if (!lockId) return;
+    var row = btn.closest('.zm-lock-row');
+
+    var fd = new FormData();
+    fd.set('action', 'remove_lock');
+    fd.set('lock_id', lockId);
+    fd.set('csrf', csrf);
+    fetch(window.location.pathname, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+      body: fd,
+      cache: 'no-store',
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        if (data && data.csrf) {
+          csrf = data.csrf;
+          document.querySelectorAll('input[type="hidden"][name="csrf"]').forEach(function (i) { i.value = csrf; });
+        }
+        if (!r.ok || (data && data.ok === false)) {
+          throw new Error((data && data.errors && data.errors.join('; ')) || ('HTTP ' + r.status));
+        }
+        if (row) row.remove();
+        var remaining = locksList.querySelectorAll('.zm-lock-row').length;
+        updateLocksCount(remaining);
+        // Reload so the diff cards lose their padlock affordance. We
+        // could patch the DOM but lock matching is non-trivial (zone
+        // / subtree etc.) and a reload is the simplest correct path.
+        window.location.reload();
+      });
+    }).catch(function (err) {
+      show('error');
+      setText('Could not remove lock', err.message || String(err));
+      setBar(0);
+    });
+  });
+
+  // Add lock.
+  if (lockAddForm) {
+    lockAddForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var fd = new FormData(lockAddForm);
+      fd.set('csrf', csrf);
+      fetch(window.location.pathname, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+        body: fd,
+        cache: 'no-store',
+      }).then(function (r) {
+        return r.json().catch(function () { return null; }).then(function (data) {
+          if (data && data.csrf) {
+            csrf = data.csrf;
+            document.querySelectorAll('input[type="hidden"][name="csrf"]').forEach(function (i) { i.value = csrf; });
+          }
+          if (!r.ok || (data && data.ok === false)) {
+            throw new Error((data && data.errors && data.errors.join('; ')) || ('HTTP ' + r.status));
+          }
+          window.location.reload();
+        });
+      }).catch(function (err) {
+        show('error');
+        setText('Could not add lock', err.message || String(err));
+        setBar(0);
+      });
+    });
+  }
 
   // ──── Per-card lock toggle ─────────────────────────────────────────
   // The padlock button on each card POSTs action=toggle_lock with the
