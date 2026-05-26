@@ -20,17 +20,23 @@ use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
  * step renders so the user can decide, per row, whether to push, skip,
  * or delete on Cloudflare.
  *
- * Pairing rule: records are matched by (type, lowercased name) plus a
- * type-specific discriminator that prevents distinct rows from
- * collapsing onto each other:
+ * Pairing rule: records are first bucketed by (type, lowercased name)
+ * plus a type-specific discriminator that pre-splits the obvious
+ * multi-row owners:
  *   - MX:  match on (type, name, target) — multiple MX with different
  *          targets are real and independent.
  *   - SRV: match on (type, name, target, port) — many services use the
  *          same _service._proto.host owner.
  *   - CAA: match on (type, name, tag, value).
- *   - everything else (A/AAAA/CNAME/TXT): match on (type, name). cPanel
- *     and Cloudflare both allow only one such record per (type, name)
- *     pair in practice.
+ *   - everything else (A/AAAA/CNAME/TXT): match on (type, name).
+ *
+ * The A/AAAA/TXT bucket can legitimately hold more than one record
+ * (round-robin A, SPF + DKIM + service verification TXTs at the apex,
+ * etc.) and Cloudflare in particular often accumulates duplicates over
+ * a zone's lifetime. {@see pairBucket()} therefore matches local and
+ * remote records inside a bucket greedily — exact-content first, then
+ * leftovers as Update / Create / Delete entries — instead of assuming a
+ * single record per bucket and silently dropping the extras.
  *
  * Result is purely advisory: nothing is enqueued or applied here. The
  * UI is the only place that knows what the user wants to do with each
@@ -121,53 +127,31 @@ final class ComputeDiff
             'remote' => count($remoteRecords),
         ]);
 
-        // Index by pairing key so we can do an O(n+m) merge.
+        // Group both sides by pairing key. We use lists (not single
+        // values) because Cloudflare allows multiple records under the
+        // same (type, name) for rrtypes the pairing key doesn't already
+        // discriminate (TXT/A/AAAA, and any pathological CNAME). The
+        // previous overwrite-on-collision code silently dropped one of
+        // them and the UI then looped forever: Apply would update the
+        // visible row, the next diff would surface the still-untouched
+        // duplicate as "different", the user would Apply again, etc.
+        /** @var array<string, list<DnsRecord>> $localByKey */
         $localByKey = [];
         foreach ($localRecords as $r) {
-            $key = $this->keyForLocal($r);
-            $localByKey[$key] = $r;
+            $localByKey[$this->keyForLocal($r)][] = $r;
         }
+        /** @var array<string, list<array<string, mixed>>> $remoteByKey */
         $remoteByKey = [];
         foreach ($remoteRecords as $r) {
-            $key = $this->keyForRemote($r);
-            $remoteByKey[$key] = $r;
+            $remoteByKey[$this->keyForRemote($r)][] = $r;
         }
 
         $entries = [];
-        foreach ($localByKey as $key => $local) {
-            if (isset($remoteByKey[$key])) {
-                $remote = $remoteByKey[$key];
-                $entries[] = new DnsDiffEntry(
-                    key: $key,
-                    status: $this->recordsMatch($local, $remote)
-                        ? DnsDiff::STATUS_IDENTICAL
-                        : DnsDiff::STATUS_DIFFERENT,
-                    type: $local->type->value,
-                    name: $local->name,
-                    local: $local,
-                    remote: $remote,
-                );
-                unset($remoteByKey[$key]);
-            } else {
-                $entries[] = new DnsDiffEntry(
-                    key: $key,
-                    status: DnsDiff::STATUS_CPANEL_ONLY,
-                    type: $local->type->value,
-                    name: $local->name,
-                    local: $local,
-                    remote: null,
-                );
-            }
-        }
-        foreach ($remoteByKey as $key => $remote) {
-            $entries[] = new DnsDiffEntry(
-                key: $key,
-                status: DnsDiff::STATUS_CLOUDFLARE_ONLY,
-                type: (string) $remote['type'],
-                name: (string) $remote['name'],
-                local: null,
-                remote: $remote,
-            );
+        $allKeys = array_keys($localByKey + $remoteByKey);
+        foreach ($allKeys as $key) {
+            $locals  = $localByKey[$key]  ?? [];
+            $remotes = $remoteByKey[$key] ?? [];
+            $entries = array_merge($entries, $this->pairBucket($key, $locals, $remotes));
         }
 
         usort($entries, static function (DnsDiffEntry $a, DnsDiffEntry $b): int {
@@ -198,6 +182,172 @@ final class ComputeDiff
             computedAt: time(),
             entries: $entries,
         );
+    }
+
+    /**
+     * Build diff entries for a single (type, name[, discriminator])
+     * bucket. The bucket can contain any combination of local and remote
+     * records; we pair them greedily so the user sees the friendliest
+     * narrative possible:
+     *
+     *  - 1 local ↔ 1 remote: one entry, "identical" or "different". The
+     *    historical case — keeps the diff readable for vanilla zones.
+     *  - N ↔ M with N=M: each local pairs with its exact-content remote
+     *    if one exists (identical), otherwise with the next free remote
+     *    (different). This avoids surface-area churn for round-robin A
+     *    records that just had one value tweaked.
+     *  - asymmetric: leftovers become cpanel_only / cloudflare_only and
+     *    the user picks the action per row.
+     *
+     * When more than one entry comes out of a bucket the entry keys are
+     * disambiguated with a content hash suffix so the apply path can
+     * round-trip each row independently (push_keys[] / delete_keys[]
+     * carry the disambiguated key).
+     *
+     * @param list<DnsRecord>             $locals
+     * @param list<array<string, mixed>>  $remotes
+     * @return list<DnsDiffEntry>
+     */
+    private function pairBucket(string $key, array $locals, array $remotes): array
+    {
+        // Fast path for the common 1:1 case — keep the bare key so the
+        // UI's "Update" affordance stays visually compact.
+        if (count($locals) === 1 && count($remotes) === 1) {
+            $local  = $locals[0];
+            $remote = $remotes[0];
+
+            return [new DnsDiffEntry(
+                key: $key,
+                status: $this->recordsMatch($local, $remote)
+                    ? DnsDiff::STATUS_IDENTICAL
+                    : DnsDiff::STATUS_DIFFERENT,
+                type: $local->type->value,
+                name: $local->name,
+                local: $local,
+                remote: $remote,
+            )];
+        }
+
+        $multi = (count($locals) + count($remotes)) > 1;
+        $out = [];
+
+        // First pass: identical matches (content + ttl-irrelevant parity)
+        // get consumed from both lists so they don't compete for the
+        // "different" slot below.
+        $remoteUsed = [];
+        $localUsed  = [];
+        foreach ($locals as $li => $local) {
+            foreach ($remotes as $ri => $remote) {
+                if (isset($remoteUsed[$ri])) {
+                    continue;
+                }
+                if ($this->recordsMatch($local, $remote)) {
+                    $out[] = new DnsDiffEntry(
+                        key: $this->entryKey($key, $local, null, $multi),
+                        status: DnsDiff::STATUS_IDENTICAL,
+                        type: $local->type->value,
+                        name: $local->name,
+                        local: $local,
+                        remote: $remote,
+                    );
+                    $remoteUsed[$ri] = true;
+                    $localUsed[$li] = true;
+
+                    break;
+                }
+            }
+        }
+
+        // Second pass: surviving locals pair with the next free remote as
+        // "different", so the user sees an Update path rather than a
+        // create+delete pair for the row.
+        foreach ($locals as $li => $local) {
+            if (isset($localUsed[$li])) {
+                continue;
+            }
+            $pairedRemote = null;
+            foreach ($remotes as $ri => $remote) {
+                if (isset($remoteUsed[$ri])) {
+                    continue;
+                }
+                $pairedRemote = $remote;
+                $remoteUsed[$ri] = true;
+
+                break;
+            }
+            if ($pairedRemote !== null) {
+                $out[] = new DnsDiffEntry(
+                    key: $this->entryKey($key, $local, $pairedRemote, $multi),
+                    status: DnsDiff::STATUS_DIFFERENT,
+                    type: $local->type->value,
+                    name: $local->name,
+                    local: $local,
+                    remote: $pairedRemote,
+                );
+            } else {
+                $out[] = new DnsDiffEntry(
+                    key: $this->entryKey($key, $local, null, $multi),
+                    status: DnsDiff::STATUS_CPANEL_ONLY,
+                    type: $local->type->value,
+                    name: $local->name,
+                    local: $local,
+                    remote: null,
+                );
+            }
+        }
+
+        // Third pass: leftover remotes (the duplicates the old code used
+        // to drop on the floor).
+        foreach ($remotes as $ri => $remote) {
+            if (isset($remoteUsed[$ri])) {
+                continue;
+            }
+            $out[] = new DnsDiffEntry(
+                key: $this->entryKey($key, null, $remote, $multi),
+                status: DnsDiff::STATUS_CLOUDFLARE_ONLY,
+                type: (string) ($remote['type'] ?? ''),
+                name: (string) ($remote['name'] ?? ''),
+                local: null,
+                remote: $remote,
+            );
+        }
+
+        return $out;
+    }
+
+    /**
+     * Stable, per-row entry key. For the 1:1 case the caller passes
+     * $multi=false and we return the bucket key untouched — preserving
+     * the historical key shape any persisted state may rely on. For
+     * multi-row buckets we suffix a content fingerprint so each card has
+     * a key the apply path can target unambiguously.
+     *
+     * The fingerprint deliberately includes the Cloudflare id when we
+     * have it, so two CF rows with identical content (an unlikely but
+     * possible state when a third party duplicated a record) still get
+     * distinct keys.
+     *
+     * @param array<string, mixed>|null $remote
+     */
+    private function entryKey(string $bucketKey, ?DnsRecord $local, ?array $remote, bool $multi): string
+    {
+        if (!$multi) {
+            return $bucketKey;
+        }
+        $seed = '';
+        if ($local !== null) {
+            $seed = ($local->content ?? '') . '|' . ($local->priority ?? '');
+            if ($local->data !== []) {
+                $seed .= '|' . (string) json_encode($local->data);
+            }
+        } elseif ($remote !== null) {
+            $seed = (string) ($remote['content'] ?? '') . '|' . ($remote['priority'] ?? '');
+            if (isset($remote['id'])) {
+                $seed .= '|id:' . (string) $remote['id'];
+            }
+        }
+
+        return $bucketKey . '#' . substr(hash('sha256', $seed), 0, 10);
     }
 
     private function keyForLocal(DnsRecord $r): string

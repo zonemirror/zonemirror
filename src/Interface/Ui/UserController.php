@@ -458,12 +458,27 @@ final class UserController
                     data: $record->data,
                 );
             }
+            // When the diff entry identified a specific Cloudflare record
+            // id as the counterpart (status=different), pin the upsert to
+            // that id. Otherwise the daemon falls back to a (type, name)
+            // snapshot lookup which can hit the wrong row when multiple
+            // records share the same owner (e.g. duplicate TXT/SPF), and
+            // the diff would keep flapping forever as Apply only ever
+            // updated one of the duplicates.
+            $remoteIdForUpsert = null;
+            if (is_array($entry['remote'] ?? null)) {
+                $rid = (string) ($entry['remote']['id'] ?? '');
+                if ($rid !== '') {
+                    $remoteIdForUpsert = $rid;
+                }
+            }
             $queue->enqueue(new DnsEvent(
                 domain: (string) ($diff['zone_name'] ?? ''),
                 action: EventAction::Upsert,
                 record: $record,
                 idempotencyKey: 'apply:' . $now . ':push:' . $key,
                 createdAt: $now,
+                targetCloudflareId: $remoteIdForUpsert,
             ));
             $pushed++;
         }
