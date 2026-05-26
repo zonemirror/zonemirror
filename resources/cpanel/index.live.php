@@ -479,19 +479,21 @@ if ($autoRefresh) {
     border-radius: 4px; font-family: inherit;
   }
   .zm-lock-btn:hover { background: rgba(0,0,0,0.05); color: #555; }
-  .zm-lock-btn .zm-lock-icon { font-size: 0.95em; line-height: 1; }
-  /* Icon glyph is content: ::before so the same markup can preview
-     the post-click state on hover. Mapping:
-       unlocked, rest  → 🔓
-       unlocked, hover → 🔒 (closing it is what a click does)
-       locked,   rest  → 🔒
-       locked,   hover → 🔓 (opening it is what a click does) */
-  .zm-lock-btn[data-locked="0"] .zm-lock-icon::before { content: "🔓"; }
-  .zm-lock-btn[data-locked="1"] .zm-lock-icon::before { content: "🔒"; }
-  .zm-lock-btn[data-locked="0"]:hover .zm-lock-icon::before,
-  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-icon::before { content: "🔒"; }
-  .zm-lock-btn[data-locked="1"]:hover .zm-lock-icon::before,
-  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-icon::before { content: "🔓"; }
+  .zm-lock-btn .zm-lock-icon { display: inline-flex; line-height: 0; }
+  .zm-lock-btn .zm-lock-svg { width: 14px; height: 14px; display: none; }
+  /* Show the open lock when unlocked, the closed lock when locked.
+     On hover/focus, swap to the icon that previews what the click
+     will do — open lock on a locked row, closed on an unlocked one. */
+  .zm-lock-btn[data-locked="0"] .zm-lock-svg-open   { display: inline-block; }
+  .zm-lock-btn[data-locked="0"]:hover .zm-lock-svg-open,
+  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-svg-open { display: none; }
+  .zm-lock-btn[data-locked="0"]:hover .zm-lock-svg-closed,
+  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-svg-closed { display: inline-block; }
+  .zm-lock-btn[data-locked="1"] .zm-lock-svg-closed { display: inline-block; }
+  .zm-lock-btn[data-locked="1"]:hover .zm-lock-svg-closed,
+  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-svg-closed { display: none; }
+  .zm-lock-btn[data-locked="1"]:hover .zm-lock-svg-open,
+  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-svg-open { display: inline-block; }
   .zm-lock-btn[data-locked="1"] {
     color: #6b4c00; background: #fff8e1; border: 1px solid #f4ce6e;
   }
@@ -1931,14 +1933,22 @@ function zm_render_card(array $e, callable $h): string
     // it's visible without expanding the body. The JS controller wires
     // up the click to an AJAX toggle_lock POST; on success the card
     // gains/loses data-locked and the checkbox is suppressed.
-    // The icon glyph is injected from CSS via ::before so the same
-    // markup can preview the post-click state on hover (closed lock
-    // when you're about to lock, open lock when you're about to
-    // unlock). Jupiter's glyphicon set is missing glyphicon-unchecked,
-    // hence the emoji pair — renders natively on every modern OS.
+    // Two inline SVGs — closed lock and open lock — and CSS decides
+    // which one is shown based on data-locked + :hover. Hand-drawn
+    // Heroicons-style outline, currentColor so it inherits the
+    // button's text colour. Jupiter's glyphicon set is missing an
+    // open-padlock glyph, hence inline SVG instead.
+    $svgClosed = '<svg class="zm-lock-svg zm-lock-svg-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        . '<rect x="5" y="11" width="14" height="9" rx="2"/>'
+        . '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
+        . '</svg>';
+    $svgOpen = '<svg class="zm-lock-svg zm-lock-svg-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
+        . '<rect x="5" y="11" width="14" height="9" rx="2"/>'
+        . '<path d="M8 11V7a4 4 0 0 1 7.5-2"/>'
+        . '</svg>';
     $lockBtn = sprintf(
         '<button type="button" class="zm-lock-btn" data-key="%s" data-locked="%s" title="%s">'
-        . '<span class="zm-lock-icon" aria-hidden="true"></span>'
+        . '<span class="zm-lock-icon" aria-hidden="true">%s%s</span>'
         . '<span class="zm-lock-label">%s</span>'
         . '</button>',
         $h($key),
@@ -1946,6 +1956,8 @@ function zm_render_card(array $e, callable $h): string
         $h($locked
             ? ($lockReason !== '' ? 'Locked: ' . $lockReason : 'Locked — ZoneMirror will not sync this row')
             : 'Click to lock this row (ZoneMirror will skip it on every apply)'),
+        $svgClosed,
+        $svgOpen,
         $locked ? 'Locked' : '',
     );
 
