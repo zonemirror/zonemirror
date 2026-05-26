@@ -132,7 +132,7 @@ final class AdminTokensController
                 ];
             }
             $refreshed = $storage->find($tok->id);
-            $zones = $refreshed?->zonesIndexed ?? 0;
+            $zones = $refreshed !== null ? $refreshed->zonesIndexed : 0;
             $accounts = $this->resolveZoneIndex()->countAccountsForToken($tok->id);
 
             return [
@@ -163,7 +163,7 @@ final class AdminTokensController
                 return ['', 'Re-verify failed: ' . $e->getMessage()];
             }
             $after = $storage->find($id);
-            $zones = $after?->zonesIndexed ?? 0;
+            $zones = $after !== null ? $after->zonesIndexed : 0;
             $accounts = $this->resolveZoneIndex()->countAccountsForToken($id);
 
             return [

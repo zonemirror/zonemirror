@@ -183,10 +183,13 @@ ZONE;
             $byType[$r->type->value][] = $r;
         }
 
-        self::assertCount(2, $byType['A']);
-        self::assertCount(2, $byType['CNAME']);
-        self::assertCount(1, $byType['MX']);
-        self::assertCount(2, $byType['TXT']);
+        // Null-coalesce the offset access so phpstan doesn't flag the
+        // optional `?:` shape of $byType; the count would be 0 if the
+        // key is missing, which still fails the assertion correctly.
+        self::assertCount(2, $byType['A']     ?? []);
+        self::assertCount(2, $byType['CNAME'] ?? []);
+        self::assertCount(1, $byType['MX']    ?? []);
+        self::assertCount(2, $byType['TXT']   ?? []);
         self::assertArrayNotHasKey('NS', $byType);
         self::assertArrayNotHasKey('SOA', $byType);
     }

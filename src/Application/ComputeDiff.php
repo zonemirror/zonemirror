@@ -196,7 +196,7 @@ final class ComputeDiff
             zoneName: $zoneName,
             zoneId: $zoneId,
             computedAt: time(),
-            entries: array_values($entries),
+            entries: $entries,
         );
     }
 
