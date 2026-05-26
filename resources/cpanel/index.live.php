@@ -42,7 +42,11 @@ $cpanel = new CPANEL();
 $autoload = '/usr/local/cpanel/3rdparty/zonemirror/vendor/autoload.php';
 if (!is_file($autoload)) {
     print $cpanel->header('ZoneMirror');
-    echo '<div class="callout callout-danger"><strong>Plugin not installed correctly.</strong> Missing vendor/autoload.php — re-run packaging/install.sh as root.</div>';
+    echo '<div class="body-content"><div class="alert alert-danger" role="alert">'
+        . '<span class="glyphicon glyphicon-remove-sign" aria-hidden="true"></span>'
+        . '<div class="alert-message"><strong class="alert-title">Plugin not installed correctly.</strong> '
+        . '<span class="alert-body">Missing vendor/autoload.php — re-run packaging/install.sh as root.</span>'
+        . '</div></div></div>';
     print $cpanel->footer();
     $cpanel->end();
     exit;
@@ -358,44 +362,31 @@ if ($autoRefresh) {
   }
   .form-stack label.inline input[type=checkbox] { margin: 0; flex: 0 0 auto; }
 
-  /* ─── Live progress banner (Apply → drain → done) ─── */
-  .zm-progress {
-    display: none;
-    margin: 0 0 1rem 0;
-    border: 1px solid #fbd97a; background: #fffaeb;
-    border-radius: 6px; padding: 0.85rem 1.1rem;
+  /* ─── Live progress banner (Apply → drain → done) ───
+     Built on cPanel's .alert markup, so the box/colour/icon already
+     come from the chrome. We only add: a spinning glyphicon while in
+     flight, the progress bar, and a right-aligned actions slot. */
+  .zm-progress { margin-bottom: 1rem; }
+  .zm-progress .zm-progress-icon {
+    margin-right: 0.4rem;
+    animation: zm-spin 1.2s linear infinite;
+    transform-origin: 50% 50%; display: inline-block;
   }
-  .zm-progress[data-tone="success"] { border-color: #b8e4c2; background: #f0faf3; }
-  .zm-progress[data-tone="warn"]    { border-color: #f4ad6a; background: #fff7ec; }
-  .zm-progress[data-tone="error"]   { border-color: #f5c6c6; background: #fdf2f2; }
-  .zm-progress .zm-progress-head {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 0.75rem; flex-wrap: wrap;
+  .zm-progress.alert-success .zm-progress-icon,
+  .zm-progress.alert-danger  .zm-progress-icon { animation: none; }
+  .zm-progress .zm-progress-actions {
+    display: inline-flex; gap: 0.5rem; flex-wrap: wrap;
+    margin-left: 0.6rem; vertical-align: middle;
   }
-  .zm-progress .zm-progress-title { font-weight: 600; color: #6b4c00; }
-  .zm-progress[data-tone="success"] .zm-progress-title { color: #0a5f1f; }
-  .zm-progress[data-tone="warn"]    .zm-progress-title { color: #8a4a00; }
-  .zm-progress[data-tone="error"]   .zm-progress-title { color: #842029; }
-  .zm-progress .zm-progress-meta { font-size: 0.85em; color: #555; }
-  .zm-progress .zm-progress-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
   .zm-progress .zm-progress-bar-outer {
-    margin-top: 0.55rem; height: 6px; background: rgba(0,0,0,0.07);
+    margin-top: 0.55rem; height: 6px; background: rgba(0,0,0,0.08);
     border-radius: 3px; overflow: hidden;
   }
   .zm-progress .zm-progress-bar-inner {
-    height: 100%; width: 0%; background: #d9a700;
+    height: 100%; width: 0%; background: currentColor; opacity: 0.55;
     transition: width 0.4s ease-out;
   }
-  .zm-progress[data-tone="success"] .zm-progress-bar-inner { background: #1f8a3e; width: 100%; }
-  .zm-progress[data-tone="error"]   .zm-progress-bar-inner { background: #c53030; }
-  .zm-progress .zm-spinner {
-    display: inline-block; width: 14px; height: 14px;
-    border: 2px solid rgba(0,0,0,0.15); border-top-color: #b35900;
-    border-radius: 50%; vertical-align: -3px; margin-right: 0.4rem;
-    animation: zm-spin 0.85s linear infinite;
-  }
-  .zm-progress[data-tone="success"] .zm-spinner,
-  .zm-progress[data-tone="error"]   .zm-spinner { display: none; }
+  .zm-progress.alert-success .zm-progress-bar-inner { width: 100%; }
   @keyframes zm-spin { to { transform: rotate(360deg); } }
 
   /* Per-card live state — overlayed on top of the existing status classes
@@ -443,10 +434,7 @@ if ($autoRefresh) {
 
 <div class="body-content zonemirror-wrap">
   <?php if (!$vm['allowed']): ?>
-    <div class="callout callout-warning">
-      <strong>This plugin is not available for your account.</strong>
-      Ask your hosting provider to enable it.
-    </div>
+    <?= zm_alert('warning', 'Ask your hosting provider to enable it.', 'This plugin is not available for your account.') ?>
     <?php
     print $cpanel->footer();
     $cpanel->end();
@@ -455,13 +443,13 @@ if ($autoRefresh) {
   <?php endif; ?>
 
   <?php if ($vm['message'] !== ''): ?>
-    <div class="callout callout-success"><?= $h($vm['message']) ?></div>
+    <?= zm_alert('success', $h($vm['message']), '') ?>
   <?php endif; ?>
   <?php foreach ($vm['errors'] as $err): ?>
-    <div class="callout callout-danger"><?= $h($err) ?></div>
+    <?= zm_alert('danger', $h($err)) ?>
   <?php endforeach; ?>
   <?php if ($vm['test_result'] !== null): ?>
-    <div class="callout callout-info"><?= $h($vm['test_result']) ?></div>
+    <?= zm_alert('info', $h($vm['test_result']), '') ?>
   <?php endif; ?>
 
   <?php /* ─── Banner: connected-domain header + Refresh/Disconnect ─── */ ?>
@@ -494,24 +482,25 @@ if ($autoRefresh) {
       </div>
     </div>
 
-    <?php /* Live progress banner. Hidden by default; the JS at the bottom of
-            the page reveals it whenever there are queued events (either from
-            an in-page Apply or a fresh page load that finds queue_depth>0). */ ?>
-    <div id="zm-progress" class="zm-progress" role="status" aria-live="polite"
+    <?php /* Live progress banner. Built on cPanel's native .alert markup so
+            it visually matches the chrome's own alertService; the JS at the
+            bottom flips the alert-info → alert-success/warning/danger class
+            depending on queue state. Hidden by default; the JS reveals it
+            whenever there are queued events. */ ?>
+    <div id="zm-progress" class="alert alert-info zm-progress" role="status" aria-live="polite"
+         style="display:none;"
          data-initial-depth="<?= (int) $vm['queue_depth'] ?>"
          data-initial-dead="<?= (int) $vm['dead_letters'] ?>"
          data-sync-state="<?= $h($vm['sync_state']) ?>">
-      <div class="zm-progress-head">
-        <div>
-          <span class="zm-spinner"></span>
-          <span class="zm-progress-title">Applying changes…</span>
-          <div class="zm-progress-meta">
-            <span id="zm-progress-detail">Waiting for the daemon…</span>
-          </div>
-        </div>
+      <span class="glyphicon glyphicon-refresh zm-progress-icon" aria-hidden="true"></span>
+      <div class="alert-message">
+        <strong class="alert-title zm-progress-title">Applying changes…</strong>
+        <span class="alert-body">
+          <span id="zm-progress-detail">Waiting for the daemon…</span>
+        </span>
         <div class="zm-progress-actions" id="zm-progress-actions"></div>
+        <div class="zm-progress-bar-outer"><div class="zm-progress-bar-inner"></div></div>
       </div>
-      <div class="zm-progress-bar-outer"><div class="zm-progress-bar-inner"></div></div>
     </div>
   <?php endif; ?>
 
@@ -541,19 +530,20 @@ if ($autoRefresh) {
 
   <?php elseif ($vm['enabled'] && $vm['sync_state'] === UserConfigStorage::STATE_FAILED): ?>
 
-    <div class="callout callout-danger" style="margin-top:1rem;">
-      <strong>Diff failed.</strong>
-      <?php if ($vm['last_error'] !== ''): ?>
-        <div style="margin-top: 0.4rem; font-family: ui-monospace, monospace; font-size: 0.86em;">
-          <?= $h($vm['last_error']) ?>
-        </div>
-      <?php endif; ?>
-      <form method="post" style="margin-top: 0.6rem;">
-        <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
-        <input type="hidden" name="action" value="refresh_diff">
-        <button type="submit" class="btn btn-primary">Retry</button>
-      </form>
-    </div>
+    <?php
+    ob_start();
+    if ($vm['last_error'] !== '') {
+        echo '<div style="margin-top: 0.4rem; font-family: ui-monospace, monospace; font-size: 0.86em;">'
+            . $h($vm['last_error']) . '</div>';
+    }
+    ?>
+    <form method="post" style="margin-top: 0.6rem;" data-zm-form="refresh">
+      <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
+      <input type="hidden" name="action" value="refresh_diff">
+      <button type="submit" class="btn btn-primary">Retry</button>
+    </form>
+    <?php $body = (string) ob_get_clean(); ?>
+    <?= zm_alert('danger', $body, 'Diff failed.', 'margin-top:1rem;') ?>
 
   <?php elseif ($vm['enabled'] && $vm['sync_state'] === UserConfigStorage::STATE_AWAITING_REVIEW && is_array($vm['diff'])): ?>
 
@@ -846,11 +836,13 @@ if ($autoRefresh) {
 
   <?php elseif ($vm['enabled'] && $vm['sync_state'] === UserConfigStorage::STATE_IDLE): ?>
 
-    <div class="callout callout-success" style="margin-top:1rem;">
-      <strong>All synced.</strong>
-      Cloudflare matches cPanel for every record that&rsquo;s under our control.
-      Future Zone-Editor edits propagate automatically.
-    </div>
+    <?= zm_alert(
+        'success',
+        'Cloudflare matches cPanel for every record that&rsquo;s under our control. '
+        . 'Future Zone-Editor edits propagate automatically.',
+        'All synced.',
+        'margin-top:1rem;'
+    ) ?>
 
   <?php endif; ?>
 
@@ -1035,11 +1027,39 @@ if ($autoRefresh) {
   }
 
   // ──── Progress banner ──────────────────────────────────────────────
-  function show(tone)         { if (!progress) return; progress.dataset.tone = tone || ''; progress.style.display = 'block'; }
-  function hide()             { if (!progress) return; progress.style.display = 'none'; delete progress.dataset.tone; }
-  function setBar(p)          { if (bar) bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
-  function setText(t, d)      { if (title) title.textContent = t; if (detail) detail.textContent = d; }
-  function setActions(html)   { if (actions) actions.innerHTML = html; }
+  // Tone is mapped to cPanel's native .alert-* class so we inherit the
+  // chrome's colour palette, icon emphasis and dark-mode tweaks instead
+  // of redefining all of it.
+  var TONE_CLASS = {
+    '':        'alert-info',
+    'info':    'alert-info',
+    'success': 'alert-success',
+    'warn':    'alert-warning',
+    'error':   'alert-danger',
+  };
+  var TONE_ICON = {
+    '':        'glyphicon-refresh',
+    'info':    'glyphicon-refresh',
+    'success': 'glyphicon-ok-sign',
+    'warn':    'glyphicon-exclamation-sign',
+    'error':   'glyphicon-remove-sign',
+  };
+  function show(tone) {
+    if (!progress) return;
+    var cls = TONE_CLASS[tone || ''] || 'alert-info';
+    progress.classList.remove('alert-info', 'alert-success', 'alert-warning', 'alert-danger');
+    progress.classList.add(cls);
+    var icon = progress.querySelector('.zm-progress-icon');
+    if (icon) {
+      icon.classList.remove('glyphicon-refresh', 'glyphicon-ok-sign', 'glyphicon-exclamation-sign', 'glyphicon-remove-sign');
+      icon.classList.add(TONE_ICON[tone || ''] || 'glyphicon-refresh');
+    }
+    progress.style.display = '';
+  }
+  function hide() { if (progress) progress.style.display = 'none'; }
+  function setBar(p)        { if (bar) bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
+  function setText(t, d)    { if (title) title.textContent = t; if (detail) detail.textContent = d; }
+  function setActions(html) { if (actions) actions.innerHTML = html; }
 
   // ──── Batch state in sessionStorage ────────────────────────────────
   function loadBatch() {
@@ -1389,6 +1409,36 @@ $cpanel->end();
 
 
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Render a cPanel-style alert. Matches the Bootstrap 3 markup the
+ * Jupiter chrome uses for its own Angular alertService, so our static
+ * messages blend in instead of looking like a third-party widget. Title
+ * is optional; when omitted the standard "Error:/Warning:/etc." label
+ * for the given type is used.
+ *
+ * The body string is treated as already-safe HTML — callers that take
+ * user input must pre-escape via $h().
+ */
+function zm_alert(string $type, string $bodyHtml, ?string $title = null, string $extraStyle = ''): string
+{
+    [$cls, $icon, $defaultTitle] = match ($type) {
+        'success' => ['alert-success', 'glyphicon-ok-sign',         'Success:'],
+        'warning' => ['alert-warning', 'glyphicon-exclamation-sign','Warning:'],
+        'danger', 'error' => ['alert-danger',  'glyphicon-remove-sign',     'Error:'],
+        default   => ['alert-info',    'glyphicon-info-sign',       'Info:'],
+    };
+    $titleHtml = $title === null
+        ? '<strong class="alert-title">' . htmlspecialchars($defaultTitle, ENT_QUOTES) . '</strong> '
+        : ($title === '' ? '' : '<strong class="alert-title">' . $title . '</strong> ');
+    $style = $extraStyle === '' ? '' : ' style="' . htmlspecialchars($extraStyle, ENT_QUOTES) . '"';
+
+    return '<div class="alert ' . $cls . '" role="alert"' . $style . '>'
+        . '<span class="glyphicon ' . $icon . '" aria-hidden="true"></span>'
+        . '<div class="alert-message">' . $titleHtml
+        . '<span class="alert-body">' . $bodyHtml . '</span>'
+        . '</div></div>';
+}
 
 /**
  * Render a single diff card. Picks the layout based on status:
