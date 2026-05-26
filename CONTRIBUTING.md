@@ -26,7 +26,7 @@ composer check          # lint + phpstan + phpunit
 make format             # PHP + shell + prettier
 ```
 
-CI runs the same commands on PHP 8.1, 8.2, and 8.3.
+CI runs the same commands on PHP 8.2, 8.3, and 8.4.
 
 ### Pre-commit hook (recommended)
 

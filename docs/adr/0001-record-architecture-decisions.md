@@ -36,10 +36,11 @@ The original scaffold mixed concerns: hooks ran as the cPanel user but config sa
 Trade-off: two UIs and two storage layers. Worth it because hosting-shared servers need both shapes
 of control.
 
-### D2: PHP 8.1+
+### D2: PHP 8.2+
 
 cPanel 108+ ships PHP 8.x by default. We use `readonly` properties, enums, typed properties,
-intersection types. Dropping PHP 7.4 support removed a large category of defensive coding.
+intersection types, and `readonly class`. PHP 8.1 reached EOL in December 2025, so dropping it
+matched the moment PHPUnit 11 made it a hard requirement.
 
 ### D3: cPanel -> Cloudflare one-way + manual import
 
