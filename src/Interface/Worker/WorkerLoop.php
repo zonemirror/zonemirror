@@ -22,6 +22,7 @@ use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
 use ZoneMirror\Infrastructure\Storage\DiffStorage;
 use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
+use ZoneMirror\Infrastructure\Storage\LockStorage;
 use ZoneMirror\Infrastructure\Storage\Paths;
 use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
 use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
@@ -322,6 +323,8 @@ final class WorkerLoop
         $now = time();
         $pushed = 0;
         $deleted = 0;
+        $lockedSkipped = 0;
+        $locks = (new LockStorage())->all($user);
 
         foreach ($entries as $entry) {
             if (!is_array($entry)) {
@@ -338,6 +341,16 @@ final class WorkerLoop
             $status = (string) ($entry['status'] ?? '');
             $key = (string) ($entry['key'] ?? '');
             if ($key === '') {
+                continue;
+            }
+            // The lock gate also covers ACME challenges. It would be
+            // exotic for a human to lock an opaque DCV token, but if
+            // they did we should still honour it — the contract is
+            // "lock means do not touch", no exceptions.
+            $lockId = LockStorage::lockIdForEntry($entry);
+            if (isset($locks[$lockId])) {
+                $lockedSkipped++;
+
                 continue;
             }
 
@@ -394,12 +407,13 @@ final class WorkerLoop
             }
         }
 
-        if ($pushed > 0 || $deleted > 0) {
+        if ($pushed > 0 || $deleted > 0 || $lockedSkipped > 0) {
             $this->log->info('auto-applying ACME DCV records', [
-                'user'    => $user,
-                'zone'    => $cfg['zone_name'],
-                'pushed'  => $pushed,
-                'deleted' => $deleted,
+                'user'           => $user,
+                'zone'           => $cfg['zone_name'],
+                'pushed'         => $pushed,
+                'deleted'        => $deleted,
+                'locked_skipped' => $lockedSkipped,
             ]);
         }
     }
