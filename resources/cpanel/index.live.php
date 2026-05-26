@@ -58,6 +58,18 @@ if ($user === '') {
 $allDomains = zm_list_user_domains($cpanel, $user);
 
 $controller = new UserController();
+
+// JSON read-only endpoint used by the live progress poll. Short-circuits
+// before any cPanel chrome is written so the response is pure JSON. The
+// cPanel session itself guards REMOTE_USER, so no extra CSRF is needed
+// for a read that only ever sees the calling user's own queue.
+if (($_GET['action'] ?? '') === 'queue_status') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    echo json_encode($controller->queueStatus($user));
+    exit;
+}
+
 $vm = $controller->handle(
     $user,
     $_SERVER['REQUEST_METHOD'] ?? 'GET',
@@ -65,21 +77,46 @@ $vm = $controller->handle(
     $allDomains,
 );
 
+// AJAX POST contract: the new in-page Apply/Refresh flow sends an
+// X-Requested-With header so we know to return a compact JSON envelope
+// instead of re-rendering the whole page. Falls back to the classic
+// full-page POST when the header is absent (no-JS, or a hard reload).
+$isAjax = isset($_SERVER['HTTP_X_REQUESTED_WITH'])
+    && strcasecmp((string) $_SERVER['HTTP_X_REQUESTED_WITH'], 'XMLHttpRequest') === 0;
+if ($isAjax && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+    header('Cache-Control: no-store');
+    echo json_encode([
+        'ok' => $vm['errors'] === [],
+        'errors' => $vm['errors'],
+        'message' => $vm['message'],
+        'sync_state' => $vm['sync_state'],
+        'queue_depth' => $vm['queue_depth'],
+        'dead_letters' => $vm['dead_letters'],
+        'csrf' => $vm['csrf'],
+        'apply' => $controller->lastApplyMeta(),
+    ]);
+    exit;
+}
+
 $h = static fn (string $s): string => htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
 print $cpanel->header('ZoneMirror');
 
-// Quietly auto-refresh on the transient states so the user doesn't have
-// to mash F5 while the daemon does its work. 4s is enough to let one
-// full cycle finish on a quiet server without spamming the page if the
-// daemon is wedged.
+// No-JS fallback only. When JS is on, the page polls queue_status and
+// patches the DOM inline; the meta-refresh would fight that by reloading
+// out from under the user. We still want a sane fallback for the rare
+// no-JS session, so emit the refresh inside <noscript>.
 $autoRefresh = in_array(
     $vm['sync_state'] ?? '',
     [UserConfigStorage::STATE_PENDING_DIFF, UserConfigStorage::STATE_COMPUTING_DIFF],
     true,
+) || (
+    ($vm['sync_state'] ?? '') === UserConfigStorage::STATE_AWAITING_REVIEW
+    && (int) $vm['queue_depth'] > 0
 );
 if ($autoRefresh) {
-    echo "<meta http-equiv=\"refresh\" content=\"4\">\n";
+    echo "<noscript><meta http-equiv=\"refresh\" content=\"4\"></noscript>\n";
 }
 ?>
 
@@ -320,6 +357,88 @@ if ($autoRefresh) {
     font-weight: 400; margin: 0.6rem 0 0;
   }
   .form-stack label.inline input[type=checkbox] { margin: 0; flex: 0 0 auto; }
+
+  /* ─── Live progress banner (Apply → drain → done) ─── */
+  .zm-progress {
+    display: none;
+    margin: 0 0 1rem 0;
+    border: 1px solid #fbd97a; background: #fffaeb;
+    border-radius: 6px; padding: 0.85rem 1.1rem;
+  }
+  .zm-progress[data-tone="success"] { border-color: #b8e4c2; background: #f0faf3; }
+  .zm-progress[data-tone="warn"]    { border-color: #f4ad6a; background: #fff7ec; }
+  .zm-progress[data-tone="error"]   { border-color: #f5c6c6; background: #fdf2f2; }
+  .zm-progress .zm-progress-head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.75rem; flex-wrap: wrap;
+  }
+  .zm-progress .zm-progress-title { font-weight: 600; color: #6b4c00; }
+  .zm-progress[data-tone="success"] .zm-progress-title { color: #0a5f1f; }
+  .zm-progress[data-tone="warn"]    .zm-progress-title { color: #8a4a00; }
+  .zm-progress[data-tone="error"]   .zm-progress-title { color: #842029; }
+  .zm-progress .zm-progress-meta { font-size: 0.85em; color: #555; }
+  .zm-progress .zm-progress-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .zm-progress .zm-progress-bar-outer {
+    margin-top: 0.55rem; height: 6px; background: rgba(0,0,0,0.07);
+    border-radius: 3px; overflow: hidden;
+  }
+  .zm-progress .zm-progress-bar-inner {
+    height: 100%; width: 0%; background: #d9a700;
+    transition: width 0.4s ease-out;
+  }
+  .zm-progress[data-tone="success"] .zm-progress-bar-inner { background: #1f8a3e; width: 100%; }
+  .zm-progress[data-tone="error"]   .zm-progress-bar-inner { background: #c53030; }
+  .zm-progress .zm-spinner {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid rgba(0,0,0,0.15); border-top-color: #b35900;
+    border-radius: 50%; vertical-align: -3px; margin-right: 0.4rem;
+    animation: zm-spin 0.85s linear infinite;
+  }
+  .zm-progress[data-tone="success"] .zm-spinner,
+  .zm-progress[data-tone="error"]   .zm-spinner { display: none; }
+  @keyframes zm-spin { to { transform: rotate(360deg); } }
+
+  /* Per-card live state — overlayed on top of the existing status classes
+     so the diff colour still shows through on the left border. */
+  .zm-card[data-apply-state="applying"] {
+    box-shadow: 0 0 0 2px rgba(217,167,0,0.35);
+  }
+  .zm-card[data-apply-state="applying"] .zm-card-head::after {
+    content: ""; display: inline-block; width: 12px; height: 12px;
+    margin-left: 0.5rem;
+    border: 2px solid rgba(217,167,0,0.25); border-top-color: #d9a700;
+    border-radius: 50%; animation: zm-spin 0.85s linear infinite;
+  }
+  .zm-card[data-apply-state="applied"] {
+    border-left-color: #1f8a3e !important; opacity: 0.55;
+  }
+  .zm-card[data-apply-state="applied"] .zm-card-head::after {
+    content: "✓ applied"; margin-left: 0.5rem;
+    color: #1f8a3e; font-size: 0.8em; font-weight: 600;
+  }
+  .zm-card[data-apply-state="failed"] {
+    border-left-color: #c53030 !important;
+    box-shadow: 0 0 0 2px rgba(197,48,48,0.35);
+  }
+  .zm-card[data-apply-state="failed"] .zm-card-head::after {
+    content: "✗ failed"; margin-left: 0.5rem;
+    color: #c53030; font-size: 0.8em; font-weight: 600;
+  }
+
+  /* Custom confirm dialog (replaces native browser confirm() for bulk
+     destructive actions — the native one looked alien inside cPanel). */
+  .zm-dialog {
+    border: 0; border-radius: 8px; padding: 0;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25); max-width: 480px; width: 90%;
+  }
+  .zm-dialog::backdrop { background: rgba(0,0,0,0.35); }
+  .zm-dialog .zm-dialog-body { padding: 1.1rem 1.25rem 0.4rem; }
+  .zm-dialog .zm-dialog-title { font-weight: 600; font-size: 1.05em; margin-bottom: 0.4rem; }
+  .zm-dialog .zm-dialog-msg { color: #444; line-height: 1.45; }
+  .zm-dialog .zm-dialog-actions {
+    display: flex; gap: 0.5rem; justify-content: flex-end;
+    padding: 0.85rem 1.25rem 1rem;
+  }
 </style>
 
 <div class="body-content zonemirror-wrap">
@@ -358,24 +477,57 @@ if ($autoRefresh) {
             <span class="zm-pill ok">Connected</span>
             via your Cloudflare token.
           <?php endif; ?>
-          &nbsp;Queue: <strong><?= (int) $vm['queue_depth'] ?></strong> pending,
-          <strong><?= (int) $vm['dead_letters'] ?></strong> failed.
         </div>
       </div>
       <div class="zm-btn-row">
-        <form method="post">
+        <form method="post" data-zm-form="refresh">
           <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
           <input type="hidden" name="action" value="refresh_diff">
           <button type="submit" class="btn btn-default">Refresh diff</button>
         </form>
-        <form method="post" onsubmit="return confirm('Stop syncing <?= $h($vm['zone_name']) ?> to Cloudflare?');">
+        <form method="post" data-zm-confirm-title="Disconnect"
+              data-zm-confirm-msg="Stop syncing <?= $h($vm['zone_name']) ?> to Cloudflare? Your local zone keeps unchanged.">
           <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
           <input type="hidden" name="action" value="disconnect">
           <button type="submit" class="btn btn-default">Disconnect</button>
         </form>
       </div>
     </div>
+
+    <?php /* Live progress banner. Hidden by default; the JS at the bottom of
+            the page reveals it whenever there are queued events (either from
+            an in-page Apply or a fresh page load that finds queue_depth>0). */ ?>
+    <div id="zm-progress" class="zm-progress" role="status" aria-live="polite"
+         data-initial-depth="<?= (int) $vm['queue_depth'] ?>"
+         data-initial-dead="<?= (int) $vm['dead_letters'] ?>"
+         data-sync-state="<?= $h($vm['sync_state']) ?>">
+      <div class="zm-progress-head">
+        <div>
+          <span class="zm-spinner"></span>
+          <span class="zm-progress-title">Applying changes…</span>
+          <div class="zm-progress-meta">
+            <span id="zm-progress-detail">Waiting for the daemon…</span>
+          </div>
+        </div>
+        <div class="zm-progress-actions" id="zm-progress-actions"></div>
+      </div>
+      <div class="zm-progress-bar-outer"><div class="zm-progress-bar-inner"></div></div>
+    </div>
   <?php endif; ?>
+
+  <?php /* Reusable confirm dialog. Bound by JS to any form carrying
+          data-zm-confirm-* attributes. Replaces the native browser
+          confirm() which looked alien inside cPanel chrome. */ ?>
+  <dialog id="zm-confirm" class="zm-dialog">
+    <div class="zm-dialog-body">
+      <div class="zm-dialog-title" id="zm-confirm-title">Confirm</div>
+      <div class="zm-dialog-msg"  id="zm-confirm-msg"></div>
+    </div>
+    <div class="zm-dialog-actions">
+      <button type="button" class="btn btn-default" id="zm-confirm-cancel">Cancel</button>
+      <button type="button" class="btn btn-primary" id="zm-confirm-ok">Confirm</button>
+    </div>
+  </dialog>
 
   <?php /* ─── Wizard / state-dependent content ─── */ ?>
   <?php if ($vm['enabled'] && in_array($vm['sync_state'], [UserConfigStorage::STATE_PENDING_DIFF, UserConfigStorage::STATE_COMPUTING_DIFF], true)): ?>
@@ -482,7 +634,7 @@ if ($autoRefresh) {
       <button type="button" class="zm-link zm-link-muted" data-select="none">Clear</button>
     </div>
 
-    <form method="post" id="zm-diff-form">
+    <form method="post" id="zm-diff-form" data-zm-form="apply">
       <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
       <input type="hidden" name="action" value="apply">
 
@@ -516,25 +668,29 @@ if ($autoRefresh) {
             <div class="zm-bulk-menu">
               <?php if ($cCreate > 0): ?>
                 <button type="submit" name="apply_status" value="cpanel_only" class="btn btn-default"
-                        onclick="return confirm('Create <?= $cCreate ?> record(s) on Cloudflare that exist on cPanel?');">
+                        data-zm-confirm-title="Create on Cloudflare"
+                        data-zm-confirm-msg="Create <?= $cCreate ?> record(s) on Cloudflare that exist on cPanel?">
                   Create all <?= $cCreate ?> missing on CF
                 </button>
               <?php endif; ?>
               <?php if ($cUpdate > 0): ?>
                 <button type="submit" name="apply_status" value="different" class="btn btn-default"
-                        onclick="return confirm('Overwrite <?= $cUpdate ?> Cloudflare record(s) with the cPanel version?');">
+                        data-zm-confirm-title="Overwrite on Cloudflare"
+                        data-zm-confirm-msg="Overwrite <?= $cUpdate ?> Cloudflare record(s) with the cPanel version?">
                   Update all <?= $cUpdate ?> differing
                 </button>
               <?php endif; ?>
               <?php if ($cDelete > 0): ?>
                 <button type="submit" name="apply_status" value="cloudflare_only" class="btn btn-default"
-                        onclick="return confirm('DELETE <?= $cDelete ?> record(s) from Cloudflare that do not exist on cPanel? This is destructive.');">
+                        data-zm-confirm-title="Delete from Cloudflare"
+                        data-zm-confirm-msg="DELETE <?= $cDelete ?> record(s) from Cloudflare that do not exist on cPanel? This is destructive.">
                   Delete all <?= $cDelete ?> CF-only
                 </button>
               <?php endif; ?>
               <?php if ($cCreate + $cUpdate > 0): ?>
                 <button type="submit" name="apply_status" value="all" class="btn btn-default"
-                        onclick="return confirm('Push every create + update from cPanel to Cloudflare? (CF-only records are NOT deleted.)');">
+                        data-zm-confirm-title="Apply all"
+                        data-zm-confirm-msg="Push every create + update from cPanel to Cloudflare? (CF-only records are NOT deleted.)">
                   Apply all creates + updates
                 </button>
               <?php endif; ?>
@@ -563,26 +719,11 @@ if ($autoRefresh) {
       form.addEventListener('change', refresh);
       refresh();
 
-      // Confirm individual-apply submits; bulk buttons already have their
-      // own onclick confirms so we skip those.
-      form.addEventListener('submit', function(e) {
-        if (e.submitter && e.submitter.name === 'apply_status') {
-          return;
-        }
-        var n = selected().length;
-        if (n === 0) {
-          e.preventDefault();
-          return;
-        }
-        var pushes  = form.querySelectorAll('input[name="push_keys[]"]:checked').length;
-        var deletes = form.querySelectorAll('input[name="delete_keys[]"]:checked').length;
-        var parts = [];
-        if (pushes)  { parts.push(pushes  + ' push' + (pushes  === 1 ? '' : 'es')); }
-        if (deletes) { parts.push(deletes + ' delete' + (deletes === 1 ? '' : 's')); }
-        if (!confirm('Apply ' + parts.join(' and ') + ' on Cloudflare?')) {
-          e.preventDefault();
-        }
-      });
+      // Submit handling (per-row apply + bulk apply) lives in the global
+      // ZoneMirror controller at the bottom of the page — it handles the
+      // AJAX POST, the progress banner, the per-card live state, and the
+      // <dialog>-based confirm flow. We just keep the form here as the
+      // canonical source of truth for the selected keys.
 
       // Filter chips. "actionable" hides identical; other filters show the
       // matching status. Identical rows are normal cards in the same flow,
@@ -804,6 +945,443 @@ if ($autoRefresh) {
     </div>
   </details>
 </div>
+
+<script>
+/*
+ * ZoneMirror live controller.
+ *
+ * Replaces the historical click → full-page POST → silent 30s wait flow
+ * with: AJAX Apply, dialog-based confirms, a live progress banner that
+ * polls /index.live.php?action=queue_status every 1.5s, and per-card
+ * applying → applied/failed states.
+ *
+ * Designed to gracefully no-op on a no-JS session — the underlying forms
+ * still submit normally and the <noscript> meta-refresh keeps the page
+ * up to date.
+ */
+(function () {
+  var POLL_MS = 1500;
+  var STUCK_MS = 30000;
+  var BATCH_KEY = 'zm-apply-batch';
+
+  var progress = document.getElementById('zm-progress');
+  var detail   = progress ? document.getElementById('zm-progress-detail')  : null;
+  var actions  = progress ? document.getElementById('zm-progress-actions') : null;
+  var bar      = progress ? progress.querySelector('.zm-progress-bar-inner') : null;
+  var title    = progress ? progress.querySelector('.zm-progress-title')   : null;
+
+  var dlg      = document.getElementById('zm-confirm');
+  var dlgTitle = document.getElementById('zm-confirm-title');
+  var dlgMsg   = document.getElementById('zm-confirm-msg');
+  var dlgOk    = document.getElementById('zm-confirm-ok');
+  var dlgNo    = document.getElementById('zm-confirm-cancel');
+
+  // Latest CSRF. The classic forms render with this; we rotate it on every
+  // AJAX response since Csrf::verify() invalidates the token on use.
+  var csrf = '<?= $h($vm['csrf']) ?>';
+
+  // ──── Custom <dialog> confirm ──────────────────────────────────────
+  function confirmDialog(t, m) {
+    if (!dlg || typeof dlg.showModal !== 'function') {
+      return Promise.resolve(window.confirm(m || t || 'Confirm?'));
+    }
+    dlgTitle.textContent = t || 'Confirm';
+    dlgMsg.textContent   = m || '';
+    return new Promise(function (resolve) {
+      var done = false;
+      function finish(ans) {
+        if (done) return; done = true;
+        dlgOk.removeEventListener('click', onOk);
+        dlgNo.removeEventListener('click', onNo);
+        dlg.removeEventListener('close', onClose);
+        if (dlg.open) { try { dlg.close(); } catch (_) {} }
+        resolve(ans);
+      }
+      function onOk()    { finish(true); }
+      function onNo()    { finish(false); }
+      function onClose() { finish(false); }
+      dlgOk.addEventListener('click', onOk);
+      dlgNo.addEventListener('click', onNo);
+      dlg.addEventListener('close', onClose);
+      try { dlg.showModal(); } catch (_) { resolve(window.confirm(m)); }
+    });
+  }
+
+  // ──── Idempotency key parser ───────────────────────────────────────
+  // Format: apply:TS:push:CARDKEY  or  apply:TS:del:CARDKEY
+  function parseIK(k) {
+    if (!k || k.slice(0, 6) !== 'apply:') return null;
+    var rest = k.slice(6);
+    var i = rest.indexOf(':');
+    if (i < 0) return null;
+    var afterTs = rest.slice(i + 1);
+    if (afterTs.slice(0, 5) === 'push:') return { action: 'push', cardKey: afterTs.slice(5) };
+    if (afterTs.slice(0, 4) === 'del:')  return { action: 'del',  cardKey: afterTs.slice(4) };
+    return null;
+  }
+
+  // ──── Card markers ─────────────────────────────────────────────────
+  function escAttr(v) {
+    return (window.CSS && CSS.escape) ? CSS.escape(v) : String(v).replace(/"/g, '\\"');
+  }
+  function markCards(state, cardKeys) {
+    cardKeys.forEach(function (k) {
+      var card = document.querySelector('.zm-card[data-key="' + escAttr(k) + '"]');
+      if (card) {
+        if (state) card.dataset.applyState = state;
+        else       delete card.dataset.applyState;
+      }
+    });
+  }
+
+  // ──── Progress banner ──────────────────────────────────────────────
+  function show(tone)         { if (!progress) return; progress.dataset.tone = tone || ''; progress.style.display = 'block'; }
+  function hide()             { if (!progress) return; progress.style.display = 'none'; delete progress.dataset.tone; }
+  function setBar(p)          { if (bar) bar.style.width = Math.max(0, Math.min(100, p)) + '%'; }
+  function setText(t, d)      { if (title) title.textContent = t; if (detail) detail.textContent = d; }
+  function setActions(html)   { if (actions) actions.innerHTML = html; }
+
+  // ──── Batch state in sessionStorage ────────────────────────────────
+  function loadBatch() {
+    try {
+      var raw = sessionStorage.getItem(BATCH_KEY);
+      if (!raw) return null;
+      var b = JSON.parse(raw);
+      if (!b.ts || (Date.now() - b.ts) > 600000) { sessionStorage.removeItem(BATCH_KEY); return null; }
+      return b;
+    } catch (_) { return null; }
+  }
+  function saveBatch(b)  { try { sessionStorage.setItem(BATCH_KEY, JSON.stringify(b)); } catch (_) {} }
+  function clearBatch()  { try { sessionStorage.removeItem(BATCH_KEY); } catch (_) {} }
+
+  // ──── Poll loop ────────────────────────────────────────────────────
+  var poll = {
+    timer: null,
+    maxDepth: 0,
+    lastDepth: -1,
+    lastChange: 0,
+    deadBaseline: 0,
+    cardKeys: [],
+    autoRefresh: true,
+    syncStateStart: '',
+    stuckShown: false,
+  };
+
+  function startPolling(opts) {
+    opts = opts || {};
+    if (poll.timer) clearInterval(poll.timer);
+    poll.maxDepth       = opts.initialDepth || 0;
+    poll.lastDepth      = -1;
+    poll.lastChange     = Date.now();
+    poll.deadBaseline   = opts.initialDead || 0;
+    poll.cardKeys       = (opts.cardKeys || []).slice();
+    poll.autoRefresh    = opts.autoRefresh !== false;
+    poll.syncStateStart = opts.syncStateStart || '';
+    poll.stuckShown     = false;
+    if (poll.cardKeys.length) markCards('applying', poll.cardKeys);
+    tick();
+    poll.timer = setInterval(tick, POLL_MS);
+  }
+
+  function stopPolling() {
+    if (poll.timer) { clearInterval(poll.timer); poll.timer = null; }
+  }
+
+  function tick() {
+    fetch(window.location.pathname + '?action=queue_status', {
+      credentials: 'same-origin',
+      headers: { 'Accept': 'application/json' },
+      cache: 'no-store',
+    })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)); })
+      .then(onTick)
+      .catch(function (e) {
+        setText('Connection issue', 'Could not reach the server (' + (e.message || e) + '). Will retry.');
+      });
+  }
+
+  function onTick(data) {
+    if (!data) return;
+    var depth = (typeof data.queue_depth === 'number') ? data.queue_depth : 0;
+    var dead  = (typeof data.dead_letters === 'number') ? data.dead_letters : 0;
+    var pending = data.pending_keys || [];
+    var syncState = data.sync_state || '';
+
+    // Diff-computation mode: reload when the sync_state changes (i.e. the
+    // daemon finished pending_diff/computing_diff and produced a fresh
+    // diff or failed).
+    if (poll.syncStateStart) {
+      if (syncState && syncState !== poll.syncStateStart) {
+        stopPolling();
+        window.location.reload();
+      }
+      return;
+    }
+
+    if (depth > poll.maxDepth) poll.maxDepth = depth;
+    if (depth !== poll.lastDepth) {
+      poll.lastDepth = depth;
+      poll.lastChange = Date.now();
+      poll.stuckShown = false;
+    }
+
+    // Per-card update — only for keys belonging to our current batch.
+    if (poll.cardKeys.length) {
+      var stillPending = {};
+      pending.forEach(function (k) { var p = parseIK(k); if (p) stillPending[p.cardKey] = true; });
+      var newlyDone = [];
+      var stillApplying = [];
+      poll.cardKeys.forEach(function (k) {
+        if (stillPending[k]) stillApplying.push(k); else newlyDone.push(k);
+      });
+      if (dead > poll.deadBaseline) {
+        // We can't tell exactly which keys failed; mark the most-recently-
+        // finished ones as failed and bump the baseline so we don't re-mark.
+        markCards('failed', newlyDone);
+        poll.deadBaseline = dead;
+      } else {
+        markCards('applied', newlyDone);
+      }
+      markCards('applying', stillApplying);
+      // Stop tracking finished keys so transitions don't reset every tick.
+      poll.cardKeys = stillApplying;
+    }
+
+    // Drained → success / error final state.
+    if (depth === 0) {
+      stopPolling();
+      clearBatch();
+      if (dead > 0) {
+        show('error');
+        setText('Applied with errors', dead + ' event(s) in dead-letter — open the user log to inspect, then Retry.');
+        setBar(100);
+        setActions('<button type="button" class="btn btn-default" id="zm-prog-refresh">Refresh diff</button>');
+        attachProgressActions();
+      } else {
+        show('success');
+        setText('All changes applied', 'Cloudflare is in sync. Refreshing the diff…');
+        setBar(100);
+        setActions('');
+        if (poll.autoRefresh) {
+          setTimeout(triggerRefreshDiff, 1500);
+        } else {
+          setActions('<button type="button" class="btn btn-default" id="zm-prog-refresh">Refresh diff</button>');
+          attachProgressActions();
+        }
+      }
+      return;
+    }
+
+    // Still draining.
+    var applied = Math.max(0, poll.maxDepth - depth);
+    show('');
+    setText(
+      'Applying changes…',
+      'Applied ' + applied + ' of ' + poll.maxDepth + ' — ' + depth + ' pending'
+        + (dead > poll.deadBaseline ? ' · ' + (dead - poll.deadBaseline) + ' failed' : '') + '.'
+    );
+    setBar(poll.maxDepth > 0 ? (applied / poll.maxDepth) * 100 : 0);
+
+    if (!poll.stuckShown && Date.now() - poll.lastChange > STUCK_MS) {
+      show('warn');
+      setText(
+        'Queue not draining',
+        depth + ' event(s) stuck for 30s+. The daemon may be slow or stopped — check `systemctl status zonemirrord`.'
+      );
+      poll.stuckShown = true;
+    }
+  }
+
+  function attachProgressActions() {
+    var b = document.getElementById('zm-prog-refresh');
+    if (b) b.addEventListener('click', triggerRefreshDiff);
+  }
+
+  // ──── AJAX submit helper ───────────────────────────────────────────
+  function ajaxSubmit(form, extras) {
+    var fd = new FormData(form);
+    if (extras) Object.keys(extras).forEach(function (k) { fd.append(k, extras[k]); });
+    fd.set('csrf', csrf);
+    return fetch(window.location.pathname, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+      body: fd,
+      cache: 'no-store',
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        if (data && data.csrf) {
+          csrf = data.csrf;
+          document.querySelectorAll('input[type="hidden"][name="csrf"]').forEach(function (i) { i.value = csrf; });
+        }
+        if (!r.ok) {
+          throw new Error((data && data.errors && data.errors.join('; ')) || ('HTTP ' + r.status));
+        }
+        if (data && data.ok === false) {
+          throw new Error((data.errors && data.errors.join('; ')) || 'Request failed');
+        }
+        return data || {};
+      });
+    });
+  }
+
+  function triggerRefreshDiff() {
+    var f = document.querySelector('form[data-zm-form="refresh"]');
+    if (!f) { window.location.reload(); return; }
+    ajaxSubmit(f).then(function () { window.location.reload(); })
+                  .catch(function () { window.location.reload(); });
+  }
+
+  // ──── Apply form (AJAX + per-card state) ───────────────────────────
+  var applyForm = document.querySelector('form[data-zm-form="apply"]');
+  if (applyForm) {
+    applyForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var submitter = e.submitter;
+      var extras = null;
+      var cTitle = '', cMsg = '';
+      var needConfirm = false;
+
+      if (submitter && submitter.name === 'apply_status') {
+        extras = { apply_status: submitter.value };
+        cTitle = submitter.getAttribute('data-zm-confirm-title') || '';
+        cMsg   = submitter.getAttribute('data-zm-confirm-msg')   || '';
+        needConfirm = !!cMsg;
+      } else {
+        var checked = applyForm.querySelectorAll(
+          'input[name="push_keys[]"]:checked, input[name="delete_keys[]"]:checked'
+        ).length;
+        if (checked === 0) return;
+      }
+
+      (needConfirm ? confirmDialog(cTitle, cMsg) : Promise.resolve(true)).then(function (ok) {
+        if (ok) runApply(applyForm, extras);
+      });
+    });
+  }
+
+  function runApply(form, extras) {
+    var applyBtn = document.getElementById('zm-apply-btn');
+    if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Applying…'; }
+
+    show('');
+    setText('Sending to ZoneMirror…', 'Enqueueing your changes.');
+    setBar(2);
+    setActions('');
+
+    ajaxSubmit(form, extras).then(function (data) {
+      var meta       = data.apply || {};
+      var pushKeys   = meta.push_keys   || [];
+      var deleteKeys = meta.delete_keys || [];
+      var allKeys    = pushKeys.concat(deleteKeys);
+      var enqueued   = allKeys.length;
+      var depth      = data.queue_depth  || 0;
+      var dead       = data.dead_letters || 0;
+
+      if (enqueued === 0) {
+        show('warn');
+        setText('Nothing enqueued', data.message || 'No changes were applied.');
+        setBar(0);
+        if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Apply selected changes'; }
+        return;
+      }
+
+      saveBatch({ ts: Date.now(), cardKeys: allKeys, enqueued: enqueued });
+
+      // Clean the submitted checkboxes from the form so the user can keep
+      // working with the remaining rows.
+      form.querySelectorAll(
+        'input[name="push_keys[]"]:checked, input[name="delete_keys[]"]:checked'
+      ).forEach(function (cb) {
+        if (allKeys.indexOf(cb.value) !== -1) {
+          cb.checked = false;
+          cb.dataset.userChecked = '0';
+        }
+      });
+      var counter = document.getElementById('zm-selected-count');
+      if (counter) counter.textContent = '0';
+      if (applyBtn) { applyBtn.disabled = true; applyBtn.textContent = 'Apply selected changes'; }
+
+      startPolling({
+        initialDepth: depth,
+        initialDead:  dead,
+        cardKeys:     allKeys,
+        autoRefresh:  true,
+      });
+    }).catch(function (err) {
+      show('error');
+      setText('Apply failed', err.message || String(err));
+      setBar(0);
+      if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Apply selected changes'; }
+    });
+  }
+
+  // ──── Refresh form (AJAX) ──────────────────────────────────────────
+  var refreshForm = document.querySelector('form[data-zm-form="refresh"]');
+  if (refreshForm) {
+    refreshForm.addEventListener('submit', function (e) {
+      e.preventDefault();
+      ajaxSubmit(refreshForm).then(function () { window.location.reload(); })
+                              .catch(function () { window.location.reload(); });
+    });
+  }
+
+  // ──── Confirm-only forms (Disconnect, and any future destructive
+  // single-shot action). These keep their classic full-page POST after
+  // the dialog answers OK — that's exactly what we want for a
+  // navigation-changing action.
+  document.querySelectorAll('form[data-zm-confirm-msg]').forEach(function (f) {
+    f.addEventListener('submit', function (e) {
+      if (f.dataset.zmConfirmed === '1') { f.dataset.zmConfirmed = ''; return; }
+      e.preventDefault();
+      confirmDialog(
+        f.getAttribute('data-zm-confirm-title') || 'Confirm',
+        f.getAttribute('data-zm-confirm-msg')   || ''
+      ).then(function (ok) {
+        if (!ok) return;
+        f.dataset.zmConfirmed = '1';
+        if (typeof f.requestSubmit === 'function') f.requestSubmit();
+        else f.submit();
+      });
+    });
+  });
+
+  // ──── Bootstrap on page load ───────────────────────────────────────
+  if (progress) {
+    var initialDepth = parseInt(progress.dataset.initialDepth || '0', 10) || 0;
+    var initialDead  = parseInt(progress.dataset.initialDead  || '0', 10) || 0;
+    var initialState = progress.dataset.syncState || '';
+    var saved = loadBatch();
+
+    if (initialState === 'pending_diff' || initialState === 'computing_diff') {
+      // Diff-computation poll: cheap, just watches sync_state. The
+      // existing "Computing diff…" callout already explains what's
+      // happening visually; we just need to reload when it's done.
+      startPolling({ syncStateStart: initialState });
+    } else if (saved && saved.cardKeys && saved.cardKeys.length) {
+      startPolling({
+        initialDepth: Math.max(initialDepth, saved.enqueued || 0),
+        initialDead:  initialDead,
+        cardKeys:     saved.cardKeys,
+        autoRefresh:  true,
+      });
+    } else if (initialDepth > 0) {
+      // Background drain we didn't initiate — show progress but don't
+      // auto-refresh out from under whatever the user is doing.
+      startPolling({
+        initialDepth: initialDepth,
+        initialDead:  initialDead,
+        cardKeys:     [],
+        autoRefresh:  false,
+      });
+    } else if (initialDead > 0) {
+      show('error');
+      setText('Previous failures', initialDead + ' event(s) in dead-letter. Check the daemon logs and consider re-running Apply.');
+      setBar(100);
+    }
+  }
+})();
+</script>
 
 <?php
 print $cpanel->footer();

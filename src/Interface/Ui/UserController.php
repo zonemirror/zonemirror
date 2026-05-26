@@ -76,6 +76,17 @@ final class UserController
     private ?FileLogger $log;
     private ?ZoneIndex $zoneIndex;
 
+    /**
+     * Side-channel from the last applySelected() call so the JSON response
+     * for an AJAX Apply can echo back the exact card keys that were
+     * enqueued (and which ones were skipped). The front-end uses this list
+     * to mark precisely those cards as "applying" without having to guess
+     * from form state.
+     *
+     * @var array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, batch_ts: int}|null
+     */
+    private ?array $lastApplyMeta = null;
+
     public function __construct(
         ?UserConfigStorage $storage = null,
         ?FileLogger $log = null,
@@ -451,7 +462,7 @@ final class UserController
                 domain: (string) ($diff['zone_name'] ?? ''),
                 action: EventAction::Upsert,
                 record: $record,
-                idempotencyKey: 'apply:' . $now . ':' . $key,
+                idempotencyKey: 'apply:' . $now . ':push:' . $key,
                 createdAt: $now,
             ));
             $pushed++;
@@ -492,7 +503,7 @@ final class UserController
                 domain: (string) ($diff['zone_name'] ?? ''),
                 action: EventAction::Delete,
                 record: $placeholder,
-                idempotencyKey: 'apply:' . $now . ':del:' . $remoteId,
+                idempotencyKey: 'apply:' . $now . ':del:' . $key,
                 createdAt: $now,
                 targetCloudflareId: $remoteId,
             ));
@@ -521,10 +532,81 @@ final class UserController
             return [false, ['Nothing selected.'], ''];
         }
 
+        // Record what we just enqueued for the AJAX response. We expose
+        // only the surviving (non-skipped) card keys so the front-end can
+        // mark exactly those cards as "applying".
+        $enqueuedPush = array_values(array_filter(
+            $pushKeys,
+            static fn (string $k): bool => !in_array($k, $skipped, true)
+        ));
+        $enqueuedDelete = array_values(array_filter(
+            $deleteKeys,
+            static fn (string $k): bool => !in_array($k, $skipped, true)
+        ));
+        $this->lastApplyMeta = [
+            'push_keys' => $enqueuedPush,
+            'delete_keys' => $enqueuedDelete,
+            'skipped' => $skipped,
+            'batch_ts' => $now,
+        ];
+
         return [
             true,
             [],
             'Queued ' . implode(' and ', $bits) . '. Cloudflare will reflect changes within ~30s.',
+        ];
+    }
+
+    /**
+     * Metadata recorded by the last call to applySelected() in this
+     * request. Null when the current request was not an apply. Used by
+     * the JSON dispatch in the cPanel template.
+     *
+     * @return array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, batch_ts: int}|null
+     */
+    public function lastApplyMeta(): ?array
+    {
+        return $this->lastApplyMeta;
+    }
+
+    /**
+     * Lightweight read-only snapshot of the user's queue state. Used by
+     * the JSON poll endpoint so the front-end can render a live progress
+     * bar without re-rendering the whole page.
+     *
+     * @return array{
+     *     enabled: bool,
+     *     sync_state: string,
+     *     queue_depth: int,
+     *     dead_letters: int,
+     *     pending_keys: list<string>,
+     *     ts: int
+     * }
+     */
+    public function queueStatus(string $user): array
+    {
+        $cfg = $this->storageFor($user)->load($user);
+        $depth = 0;
+        $dead = 0;
+        $pending = [];
+        if ($cfg['enabled']) {
+            try {
+                $queue = new SqliteQueue($user);
+                $depth = $queue->depth();
+                $dead = $queue->deadLetterCount();
+                $pending = $queue->pendingKeys();
+            } catch (\Throwable) {
+                // queue file may not exist yet — zeros are fine.
+            }
+        }
+
+        return [
+            'enabled' => $cfg['enabled'],
+            'sync_state' => $cfg['sync_state'],
+            'queue_depth' => $depth,
+            'dead_letters' => $dead,
+            'pending_keys' => $pending,
+            'ts' => time(),
         ];
     }
 
