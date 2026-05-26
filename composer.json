@@ -29,8 +29,8 @@
   "require-dev": {
     "phpunit/phpunit": "^10.5",
     "friendsofphp/php-cs-fixer": "^3.64",
-    "phpstan/phpstan": "^1.12",
-    "phpstan/phpstan-strict-rules": "^1.6"
+    "phpstan/phpstan": "^2.1",
+    "phpstan/phpstan-strict-rules": "^2.0"
   },
   "suggest": {
     "ext-sodium": "Preferred AEAD cipher (XChaCha20-Poly1305) for token-at-rest encryption."

@@ -214,9 +214,9 @@ final class UserConfigStorage
             && function_exists('posix_getpwnam')
         ) {
             $pw = @posix_getpwnam($user);
-            if (is_array($pw) && isset($pw['uid'], $pw['gid'])) {
-                @chown($path, (int) $pw['uid']);
-                @chgrp($path, (int) $pw['gid']);
+            if (is_array($pw)) {
+                @chown($path, $pw['uid']);
+                @chgrp($path, $pw['gid']);
             }
         }
     }

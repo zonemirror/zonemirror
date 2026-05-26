@@ -146,7 +146,7 @@ final class Paths
         // a hardcoded prefix.
         if (function_exists('posix_getpwnam')) {
             $pw = posix_getpwnam($user);
-            if (is_array($pw) && isset($pw['dir']) && is_string($pw['dir']) && $pw['dir'] !== '') {
+            if (is_array($pw) && $pw['dir'] !== '') {
                 return $pw['dir'];
             }
         }

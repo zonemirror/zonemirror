@@ -112,6 +112,8 @@ final class CloudflareApiClient
     }
 
     /**
+     * @param non-empty-string $method
+     * @param non-empty-string $path
      * @param array<string, mixed>|null $body
      */
     private function send(string $method, string $path, ?array $body = null): HttpResponse
@@ -126,19 +128,30 @@ final class CloudflareApiClient
             'User-Agent: ' . self::USER_AGENT,
         ];
 
-        curl_setopt_array($handle, [
-            CURLOPT_URL => $url,
-            CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HEADER => true,
-            CURLOPT_TIMEOUT => self::TIMEOUT_SECONDS,
-            CURLOPT_CONNECTTIMEOUT => 5,
-            CURLOPT_FOLLOWLOCATION => false,
-            CURLOPT_SSL_VERIFYPEER => true,
-            CURLOPT_SSL_VERIFYHOST => 2,
-            CURLOPT_POSTFIELDS => $body !== null ? json_encode($body) : null,
-        ]);
+        $postFields = null;
+        if ($body !== null) {
+            $encoded = json_encode($body);
+            // json_encode only returns false on encoding errors (NaN, INF,
+            // malformed UTF-8). Our payloads are scalar arrays so this is
+            // a runtime guard, not a path we expect to hit.
+            if ($encoded !== false) {
+                $postFields = $encoded;
+            }
+        }
+
+        curl_setopt($handle, CURLOPT_URL, $url);
+        curl_setopt($handle, CURLOPT_CUSTOMREQUEST, $method);
+        curl_setopt($handle, CURLOPT_HTTPHEADER, $headers);
+        curl_setopt($handle, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($handle, CURLOPT_HEADER, true);
+        curl_setopt($handle, CURLOPT_TIMEOUT, self::TIMEOUT_SECONDS);
+        curl_setopt($handle, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($handle, CURLOPT_FOLLOWLOCATION, false);
+        curl_setopt($handle, CURLOPT_SSL_VERIFYPEER, true);
+        curl_setopt($handle, CURLOPT_SSL_VERIFYHOST, 2);
+        if ($postFields !== null) {
+            curl_setopt($handle, CURLOPT_POSTFIELDS, $postFields);
+        }
 
         $raw = curl_exec($handle);
         if ($raw === false) {
