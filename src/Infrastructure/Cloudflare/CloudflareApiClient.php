@@ -13,9 +13,12 @@ use RuntimeException;
  * Surfaces rate-limit and Retry-After headers so the queue can back off
  * instead of hammering the API.
  *
+ * Not `final` so tests can subclass and stub `createRecord`/`updateRecord`
+ * without spinning up a real cURL handle — see ProcessEventTest.
+ *
  * @phpstan-type Record array<string, mixed>
  */
-final class CloudflareApiClient
+class CloudflareApiClient
 {
     private const BASE_URL = 'https://api.cloudflare.com/client/v4';
     private const USER_AGENT = 'zonemirror/1.0 (+https://github.com/zonemirror/zonemirror)';
@@ -234,6 +237,9 @@ final class CloudflareApiClient
         $message = is_array($errors) && isset($errors[0]['message'])
             ? (string) $errors[0]['message']
             : ('HTTP ' . $resp->status);
+        $cfCode = is_array($errors) && isset($errors[0]['code']) && is_numeric($errors[0]['code'])
+            ? (int) $errors[0]['code']
+            : null;
 
         $retryable = $resp->status === 429 || $resp->status >= 500;
 
@@ -242,6 +248,7 @@ final class CloudflareApiClient
             httpStatus: $resp->status,
             retryable: $retryable,
             retryAfterSeconds: $resp->retryAfterSeconds,
+            cloudflareCode: $cfCode,
         );
     }
 
