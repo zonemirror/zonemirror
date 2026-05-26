@@ -16,6 +16,7 @@ use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
 use ZoneMirror\Infrastructure\Storage\DiffStorage;
 use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
+use ZoneMirror\Infrastructure\Storage\LockStorage;
 use ZoneMirror\Infrastructure\Storage\Paths;
 use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
 use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
@@ -59,7 +60,8 @@ use ZoneMirror\Infrastructure\Storage\ZoneIndex;
  *     dead_letters: int,
  *     test_result: ?string,
  *     domains: list<DomainStatus>,
- *     diff: array<string, mixed>|null
+ *     diff: array<string, mixed>|null,
+ *     locks_count: int
  * }
  */
 final class UserController
@@ -83,7 +85,7 @@ final class UserController
      * to mark precisely those cards as "applying" without having to guess
      * from form state.
      *
-     * @var array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, batch_ts: int}|null
+     * @var array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, blocked_by_lock: list<string>, batch_ts: int}|null
      */
     private ?array $lastApplyMeta = null;
 
@@ -148,6 +150,8 @@ final class UserController
                     [$saved, $errors, $message] = $this->refreshDiff($user);
                 } elseif ($action === 'apply') {
                     [$saved, $errors, $message] = $this->applySelected($user, $post);
+                } elseif ($action === 'toggle_lock') {
+                    [$saved, $errors, $message] = $this->toggleLock($user, $post);
                 } elseif ($action === 'test') {
                     $testResult = $this->testConnection(
                         (string) ($post['token'] ?? ''),
@@ -173,6 +177,26 @@ final class UserController
         }
 
         $diff = $cfg['enabled'] ? (new DiffStorage())->load($user) : null;
+        $locks = $cfg['enabled'] ? (new LockStorage())->all($user) : [];
+
+        // Annotate each diff entry with whether the user has locked it.
+        // The template uses this to render the padlock affordance and to
+        // hide the apply checkbox on locked rows. Cheap to compute here
+        // (set membership over a small hash table) and keeps the
+        // template free of LockStorage knowledge.
+        if (is_array($diff) && isset($diff['entries']) && is_array($diff['entries'])) {
+            foreach ($diff['entries'] as $i => $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+                $lockId = LockStorage::lockIdForEntry($entry);
+                $diff['entries'][$i]['lock_id'] = $lockId;
+                $diff['entries'][$i]['locked']  = isset($locks[$lockId]);
+                if (isset($locks[$lockId]['reason'])) {
+                    $diff['entries'][$i]['lock_reason'] = (string) $locks[$lockId]['reason'];
+                }
+            }
+        }
 
         return [
             'user' => $user,
@@ -194,6 +218,7 @@ final class UserController
             'test_result' => $testResult,
             'domains' => $this->buildDomainsStatus($allDomains, $cfg),
             'diff' => $diff,
+            'locks_count' => count($locks),
         ];
     }
 
@@ -424,6 +449,33 @@ final class UserController
         $pushKeys = array_values(array_unique($pushKeys));
         $deleteKeys = array_values(array_unique($deleteKeys));
 
+        // Locks gate: even if the user (or a bulk-select) ticked a row
+        // they've previously protected, drop it here so no Upsert/Delete
+        // ever escapes the controller. We record the dropped keys
+        // separately so the AJAX response can tell the UI "we ignored
+        // these on purpose, the cards still need their padlock".
+        $locks = (new LockStorage())->all($user);
+        $blockedByLock = [];
+        $filter = function (array $keys) use (&$blockedByLock, $byKey, $locks): array {
+            $out = [];
+            foreach ($keys as $key) {
+                $entry = $byKey[$key] ?? null;
+                if (is_array($entry)) {
+                    $lockId = LockStorage::lockIdForEntry($entry);
+                    if (isset($locks[$lockId])) {
+                        $blockedByLock[] = $key;
+
+                        continue;
+                    }
+                }
+                $out[] = $key;
+            }
+
+            return $out;
+        };
+        $pushKeys = $filter($pushKeys);
+        $deleteKeys = $filter($deleteKeys);
+
         $queue = new SqliteQueue($user);
         $now = time();
         $pushed = 0;
@@ -559,17 +611,82 @@ final class UserController
             static fn (string $k): bool => !in_array($k, $skipped, true)
         ));
         $this->lastApplyMeta = [
-            'push_keys' => $enqueuedPush,
+            'push_keys'   => $enqueuedPush,
             'delete_keys' => $enqueuedDelete,
-            'skipped' => $skipped,
-            'batch_ts' => $now,
+            'skipped'     => $skipped,
+            'blocked_by_lock' => array_values(array_unique($blockedByLock)),
+            'batch_ts'    => $now,
         ];
 
-        return [
-            true,
-            [],
-            'Queued ' . implode(' and ', $bits) . '. Cloudflare will reflect changes within ~30s.',
-        ];
+        $msg = 'Queued ' . implode(' and ', $bits) . '. Cloudflare will reflect changes within ~30s.';
+        if ($blockedByLock !== []) {
+            $n = count(array_unique($blockedByLock));
+            $msg .= sprintf(' %d locked row%s ignored.', $n, $n === 1 ? '' : 's');
+        }
+
+        return [true, [], $msg];
+    }
+
+    /**
+     * Toggle a per-record lock. The POST carries the diff entry key
+     * (data-key on the card) — we look the entry up, compute the
+     * content-hash lock id, and either add or remove the lock based on
+     * the current state. Optionally accepts a `reason` for human
+     * context.
+     *
+     * @param array<string, mixed> $post
+     * @return array{0: bool, 1: list<string>, 2: string}
+     */
+    private function toggleLock(string $user, array $post): array
+    {
+        $cfg = $this->storageFor($user)->load($user);
+        if (!$cfg['enabled']) {
+            return [false, ['No domain connected.'], ''];
+        }
+
+        $key = trim((string) ($post['lock_key'] ?? ''));
+        if ($key === '') {
+            return [false, ['Missing record identifier.'], ''];
+        }
+
+        $diff = (new DiffStorage())->load($user);
+        if ($diff === null) {
+            return [false, ['No diff available.'], ''];
+        }
+        $entry = null;
+        foreach (($diff['entries'] ?? []) as $e) {
+            if (is_array($e) && (string) ($e['key'] ?? '') === $key) {
+                $entry = $e;
+
+                break;
+            }
+        }
+        if ($entry === null) {
+            return [false, ['Record not found in current diff.'], ''];
+        }
+
+        $lockId  = LockStorage::lockIdForEntry($entry);
+        $storage = new LockStorage();
+        $reason  = trim((string) ($post['reason'] ?? ''));
+
+        if ($storage->isLocked($user, $lockId)) {
+            $storage->remove($user, $lockId);
+            $msg = sprintf('Lock removed from %s %s.', (string) ($entry['type'] ?? ''), (string) ($entry['name'] ?? ''));
+        } else {
+            $source = is_array($entry['local'] ?? null)
+                ? $entry['local']
+                : (is_array($entry['remote'] ?? null) ? $entry['remote'] : []);
+            $storage->add(
+                user: $user,
+                type: (string) ($entry['type'] ?? ($source['type'] ?? '')),
+                name: (string) ($entry['name'] ?? ($source['name'] ?? '')),
+                content: isset($source['content']) ? (string) $source['content'] : null,
+                reason: $reason,
+            );
+            $msg = sprintf('Lock added to %s %s.', (string) ($entry['type'] ?? ''), (string) ($entry['name'] ?? ''));
+        }
+
+        return [true, [], $msg];
     }
 
     /**
@@ -577,7 +694,7 @@ final class UserController
      * request. Null when the current request was not an apply. Used by
      * the JSON dispatch in the cPanel template.
      *
-     * @return array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, batch_ts: int}|null
+     * @return array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, blocked_by_lock: list<string>, batch_ts: int}|null
      */
     public function lastApplyMeta(): ?array
     {

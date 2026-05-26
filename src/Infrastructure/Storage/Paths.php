@@ -131,6 +131,11 @@ final class Paths
         return self::userDir($user) . '/log.txt';
     }
 
+    public static function userLocksFile(string $user): string
+    {
+        return self::userDir($user) . '/locks.json';
+    }
+
     private static function userHome(string $user): string
     {
         $override = getenv(self::ENV_USER_HOME);

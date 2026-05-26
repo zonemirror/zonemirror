@@ -416,6 +416,29 @@ if ($autoRefresh) {
     color: #c53030; font-size: 0.8em; font-weight: 600;
   }
 
+  /* Lock affordance per card. Click to flip; the JS controller fires
+     an AJAX toggle_lock and rewrites data-locked on success. Locked
+     cards get a slate border, faded body and their checkbox suppressed
+     so the user can't tick them by accident. */
+  .zm-lock-btn {
+    margin-left: auto;
+    background: none; border: 0; padding: 0.15rem 0.5rem; cursor: pointer;
+    color: #888; font-size: 0.82em; display: inline-flex; align-items: center; gap: 0.3rem;
+    border-radius: 4px; font-family: inherit;
+  }
+  .zm-lock-btn:hover { background: rgba(0,0,0,0.05); color: #555; }
+  .zm-lock-btn .zm-lock-icon { font-size: 0.95em; }
+  .zm-lock-btn[data-locked="1"] {
+    color: #6b4c00; background: #fff8e1; border: 1px solid #f4ce6e;
+  }
+  .zm-lock-btn[data-locked="1"] .zm-lock-label { font-weight: 600; }
+  .zm-card[data-locked="1"] {
+    background: #fbf9f0; border-left-color: #c8a73b !important;
+  }
+  .zm-card[data-locked="1"] .zm-card-body { opacity: 0.65; }
+  .zm-card[data-locked="1"] .zm-toggle-proxy,
+  .zm-card[data-locked="1"] .zm-actions { pointer-events: none; opacity: 0.55; }
+
   /* Custom confirm dialog (replaces native browser confirm() for bulk
      destructive actions — the native one looked alien inside cPanel). */
   .zm-dialog {
@@ -1366,6 +1389,108 @@ if ($autoRefresh) {
     });
   });
 
+  // ──── Per-card lock toggle ─────────────────────────────────────────
+  // The padlock button on each card POSTs action=toggle_lock with the
+  // card's data-key. We optimistically swap data-locked + the icon
+  // class, then revert on error. The matching apply checkbox is hidden
+  // (and unticked) while locked so a bulk-select cannot drag the row
+  // into the next push.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest && e.target.closest('.zm-lock-btn');
+    if (!btn) return;
+    e.preventDefault();
+    var card = btn.closest('.zm-card');
+    if (!card) return;
+    var key = btn.getAttribute('data-key') || '';
+    var wasLocked = btn.getAttribute('data-locked') === '1';
+    var nowLocked = !wasLocked;
+
+    // Optimistic update.
+    btn.setAttribute('data-locked', nowLocked ? '1' : '0');
+    card.setAttribute('data-locked', nowLocked ? '1' : '0');
+    var icon = btn.querySelector('.zm-lock-icon');
+    if (icon) {
+      icon.classList.remove('glyphicon-lock', 'glyphicon-unchecked');
+      icon.classList.add(nowLocked ? 'glyphicon-lock' : 'glyphicon-unchecked');
+    }
+    var label = btn.querySelector('.zm-lock-label');
+    if (label) label.textContent = nowLocked ? 'Locked' : '';
+    // Hide / show the matching apply checkbox; identical cards already
+    // hide it for a different reason, leave them alone.
+    var cb = card.querySelector('input[name="push_keys[]"], input[name="delete_keys[]"]');
+    if (cb && card.dataset.status !== 'identical') {
+      if (nowLocked) {
+        cb.checked = false;
+        cb.dataset.userChecked = '0';
+        cb.style.visibility = 'hidden';
+      } else {
+        cb.style.visibility = '';
+      }
+    }
+
+    var fd = new FormData();
+    fd.set('action', 'toggle_lock');
+    fd.set('lock_key', key);
+    fd.set('csrf', csrf);
+    fetch(window.location.pathname, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json' },
+      body: fd,
+      cache: 'no-store',
+    }).then(function (r) {
+      return r.json().catch(function () { return null; }).then(function (data) {
+        if (data && data.csrf) {
+          csrf = data.csrf;
+          document.querySelectorAll('input[type="hidden"][name="csrf"]').forEach(function (i) { i.value = csrf; });
+        }
+        if (!r.ok || (data && data.ok === false)) {
+          throw new Error((data && data.errors && data.errors.join('; ')) || ('HTTP ' + r.status));
+        }
+      });
+    }).catch(function (err) {
+      // Revert on failure.
+      btn.setAttribute('data-locked', wasLocked ? '1' : '0');
+      card.setAttribute('data-locked', wasLocked ? '1' : '0');
+      if (icon) {
+        icon.classList.remove('glyphicon-lock', 'glyphicon-unchecked');
+        icon.classList.add(wasLocked ? 'glyphicon-lock' : 'glyphicon-unchecked');
+      }
+      if (label) label.textContent = wasLocked ? 'Locked' : '';
+      if (cb && card.dataset.status !== 'identical') {
+        cb.style.visibility = '';
+      }
+      show('error');
+      setText('Lock toggle failed', err.message || String(err));
+      setBar(0);
+    });
+  });
+
+  // Bulk-select must skip locked rows. The existing handler picks
+  // every visible card; we intercept the selection just before it
+  // ticks the checkbox.
+  document.querySelectorAll('.zm-select-row .zm-link').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      // After the original handler runs, untick anything locked.
+      setTimeout(function () {
+        document.querySelectorAll('.zm-card[data-locked="1"]').forEach(function (card) {
+          var cb = card.querySelector('input[name="push_keys[]"], input[name="delete_keys[]"]');
+          if (cb) cb.checked = false;
+        });
+        var counter = document.getElementById('zm-selected-count');
+        if (counter) {
+          counter.textContent = document.querySelectorAll(
+            'input[name="push_keys[]"]:checked, input[name="delete_keys[]"]:checked'
+          ).length;
+        }
+        var applyBtn = document.getElementById('zm-apply-btn');
+        if (applyBtn) {
+          applyBtn.disabled = counter && parseInt(counter.textContent, 10) === 0;
+        }
+      }, 0);
+    });
+  });
+
   // ──── Bootstrap on page load ───────────────────────────────────────
   if (progress) {
     var initialDepth = parseInt(progress.dataset.initialDepth || '0', 10) || 0;
@@ -1515,30 +1640,54 @@ function zm_render_card(array $e, callable $h): string
         );
     }
 
+    $locked      = !empty($e['locked']);
+    $lockReason  = (string) ($e['lock_reason'] ?? '');
+    $hideCheckbox = $status === DnsDiff::STATUS_IDENTICAL || $locked;
     $checkbox = sprintf(
         '<input type="checkbox" name="%s" value="%s"%s>',
         $h($checkboxName),
         $h($key),
-        $status === DnsDiff::STATUS_IDENTICAL ? ' style="visibility:hidden"' : '',
+        $hideCheckbox ? ' style="visibility:hidden"' : '',
+    );
+
+    // Lock affordance. Lives in the card head next to the type pill so
+    // it's visible without expanding the body. The JS controller wires
+    // up the click to an AJAX toggle_lock POST; on success the card
+    // gains/loses data-locked and the checkbox is suppressed.
+    $lockBtn = sprintf(
+        '<button type="button" class="zm-lock-btn" data-key="%s" data-locked="%s" title="%s">'
+        . '<span class="zm-lock-icon glyphicon %s" aria-hidden="true"></span>'
+        . '<span class="zm-lock-label">%s</span>'
+        . '</button>',
+        $h($key),
+        $locked ? '1' : '0',
+        $h($locked
+            ? ($lockReason !== '' ? 'Locked: ' . $lockReason : 'Locked — ZoneMirror will not sync this row')
+            : 'Click to lock this row (ZoneMirror will skip it on every apply)'),
+        $locked ? 'glyphicon-lock' : 'glyphicon-unchecked',
+        $locked ? 'Locked' : '',
     );
 
     return sprintf(
-        '<div class="zm-card status-%s" data-status="%s" data-key="%s">'
+        '<div class="zm-card status-%s" data-status="%s" data-key="%s" data-locked="%s">'
         . '<label class="zm-card-head">%s'
         . '<span class="zm-pill %s">%s</span>'
         . '<span class="zm-rtype">%s</span>'
         . '<span class="zm-rname">%s</span>'
+        . '%s'
         . '</label>'
         . '<div class="zm-card-body">%s%s</div>'
         . '</div>',
         $h($status),
         $h($status),
         $h($key),
+        $locked ? '1' : '0',
         $checkbox,
         $h($labelClass),
         $h($labelText),
         $h($type),
         $h($name),
+        $lockBtn,
         $body,
         $actions,
     );
