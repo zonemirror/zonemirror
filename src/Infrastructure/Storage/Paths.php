@@ -63,6 +63,37 @@ final class Paths
         return self::systemDir() . '/enrolled-users';
     }
 
+    /**
+     * Per-zone record of `_dmarc*` rewrites the plugin has applied to
+     * the local BIND zone file, with the pre-rewrite content. Consumed
+     * by the revert path (`zonemirror local-dmarc revert` and the
+     * interactive uninstall flow). Root-owned, 0644 — not a secret, but
+     * touch only through LocalRewriteState so writes stay atomic.
+     */
+    public static function localRewritesFile(): string
+    {
+        return self::systemDir() . '/local-rewrites.json';
+    }
+
+    /**
+     * Override for the BIND zone files root. Defaults to /var/named on
+     * cPanel; tests point it at a tmp dir to exercise the writer end to
+     * end without touching the production server's DNS.
+     */
+    public const ENV_BIND_DIR = 'ZONEMIRROR_BIND_DIR';
+
+    public static function bindDir(): string
+    {
+        $override = getenv(self::ENV_BIND_DIR);
+
+        return is_string($override) && $override !== '' ? $override : '/var/named';
+    }
+
+    public static function bindZoneFile(string $zone): string
+    {
+        return self::bindDir() . '/' . strtolower(rtrim($zone, '.')) . '.db';
+    }
+
     public static function logFile(): string
     {
         return self::systemDir() . '/logs/zonemirror.log';

@@ -155,6 +155,13 @@ final class AdminController
         $spfExtras = $this->composer->composeSpfExtras($presetSlugs, $spfCustomRaw, $serverIpv6);
 
         try {
+            // Preserve local_rewrite as-is: this form doesn't yet expose
+            // the rewrite-side knobs, but the SystemConfig contract now
+            // requires the key to be present on save(). Read the current
+            // value back and pass it through unchanged. When the WHM form
+            // grows the rewrite section, this is where the post fields
+            // will feed in.
+            $existing = $this->storage->load();
             $this->storage->save([
                 'defaults' => [
                     'proxied' => isset($post['defaults_proxied']) && (string) $post['defaults_proxied'] !== '',
@@ -171,6 +178,7 @@ final class AdminController
                     'spf_presets' => $presetSlugs,
                     'spf_custom' => $spfCustomRaw,
                 ],
+                'local_rewrite' => $existing['local_rewrite'],
             ]);
 
             return [true, []];

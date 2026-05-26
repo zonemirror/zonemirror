@@ -20,6 +20,7 @@ use RuntimeException;
  * touch each per-user zone file in cPanel.
  *
  * @phpstan-type DmarcBuilderCfg array{enabled: bool, policy: string, email: string, rua: bool, ruf: bool, sp: string, pct: ?int, custom: string}
+ * @phpstan-type LocalRewriteCfg array{enabled: bool, exclude_zones: list<string>, overwrite_custom_rua: bool, respect_has_custom_dmarc: bool, respect_user_locks: bool}
  * @phpstan-type SystemConfig array{
  *     defaults: array{proxied: bool, ttl: int, auto_ttl: bool},
  *     allowed_users: 'all'|list<string>,
@@ -31,7 +32,8 @@ use RuntimeException;
  *         dmarc: DmarcBuilderCfg,
  *         spf_presets: list<string>,
  *         spf_custom: string
- *     }
+ *     },
+ *     local_rewrite: LocalRewriteCfg
  * }
  */
 final class SystemConfigStorage
@@ -117,8 +119,44 @@ final class SystemConfigStorage
                 $merged['email_normalization']['spf_custom'] = $en['spf_custom'];
             }
         }
+        if (isset($json['local_rewrite']) && is_array($json['local_rewrite'])) {
+            $merged['local_rewrite'] = $this->normaliseLocalRewrite(
+                $json['local_rewrite'],
+                $merged['local_rewrite'],
+            );
+        }
 
         return $merged;
+    }
+
+    /**
+     * @param array<string, mixed> $raw
+     * @param LocalRewriteCfg $defaults
+     * @return LocalRewriteCfg
+     */
+    private function normaliseLocalRewrite(array $raw, array $defaults): array
+    {
+        $excludes = $defaults['exclude_zones'];
+        if (isset($raw['exclude_zones']) && is_array($raw['exclude_zones'])) {
+            $excludes = [];
+            foreach ($raw['exclude_zones'] as $z) {
+                if (is_string($z)) {
+                    $z = strtolower(rtrim(trim($z), '.'));
+                    if ($z !== '') {
+                        $excludes[] = $z;
+                    }
+                }
+            }
+            $excludes = array_values(array_unique($excludes));
+        }
+
+        return [
+            'enabled'                  => (bool) ($raw['enabled'] ?? $defaults['enabled']),
+            'exclude_zones'            => $excludes,
+            'overwrite_custom_rua'     => (bool) ($raw['overwrite_custom_rua'] ?? $defaults['overwrite_custom_rua']),
+            'respect_has_custom_dmarc' => (bool) ($raw['respect_has_custom_dmarc'] ?? $defaults['respect_has_custom_dmarc']),
+            'respect_user_locks'       => (bool) ($raw['respect_user_locks'] ?? $defaults['respect_user_locks']),
+        ];
     }
 
     /**
@@ -218,6 +256,27 @@ final class SystemConfigStorage
                 ],
                 'spf_presets' => [],
                 'spf_custom' => '',
+            ],
+            'local_rewrite' => [
+                // Off by default. The admin opts in from WHM (or the CLI)
+                // because rewriting /var/named/ is invasive and the operator
+                // should see the dry-run diff before any zone changes hands.
+                'enabled' => false,
+                // Empty exclude list paired with enabled=true means "every
+                // zone the cPanel server knows about" — see ApplyLocalDmarc.
+                'exclude_zones' => [],
+                // Off: by default, leave _dmarc records that already carry
+                // a custom rua/ruf alone (the customer presumably set them
+                // for a reason). Flip on to enforce the template even over
+                // existing rua/ruf.
+                'overwrite_custom_rua' => false,
+                // Skip zones that cPanel flagged as has_custom_dmarc
+                // (/var/cpanel/has_custom_dmarc/<dom>). Default on; admin
+                // can override per-zone via exclude_zones if they want.
+                'respect_has_custom_dmarc' => true,
+                // Skip _dmarc records protected by a per-user lock (any
+                // scope: zone / subtree / name / type_name / exact).
+                'respect_user_locks' => true,
             ],
         ];
     }
