@@ -1683,8 +1683,7 @@ if ($autoRefresh) {
     card.setAttribute('data-locked', nowLocked ? '1' : '0');
     var icon = btn.querySelector('.zm-lock-icon');
     if (icon) {
-      icon.classList.remove('glyphicon-lock', 'glyphicon-unchecked');
-      icon.classList.add(nowLocked ? 'glyphicon-lock' : 'glyphicon-unchecked');
+      icon.textContent = nowLocked ? '🔒' : '🔓';
     }
     var label = btn.querySelector('.zm-lock-label');
     if (label) label.textContent = nowLocked ? 'Locked' : '';
@@ -1726,8 +1725,7 @@ if ($autoRefresh) {
       btn.setAttribute('data-locked', wasLocked ? '1' : '0');
       card.setAttribute('data-locked', wasLocked ? '1' : '0');
       if (icon) {
-        icon.classList.remove('glyphicon-lock', 'glyphicon-unchecked');
-        icon.classList.add(wasLocked ? 'glyphicon-lock' : 'glyphicon-unchecked');
+        icon.textContent = wasLocked ? '🔒' : '🔓';
       }
       if (label) label.textContent = wasLocked ? 'Locked' : '';
       if (cb && card.dataset.status !== 'identical') {
@@ -1929,7 +1927,7 @@ function zm_render_card(array $e, callable $h): string
     // gains/loses data-locked and the checkbox is suppressed.
     $lockBtn = sprintf(
         '<button type="button" class="zm-lock-btn" data-key="%s" data-locked="%s" title="%s">'
-        . '<span class="zm-lock-icon glyphicon %s" aria-hidden="true"></span>'
+        . '<span class="zm-lock-icon" aria-hidden="true">%s</span>'
         . '<span class="zm-lock-label">%s</span>'
         . '</button>',
         $h($key),
@@ -1937,7 +1935,11 @@ function zm_render_card(array $e, callable $h): string
         $h($locked
             ? ($lockReason !== '' ? 'Locked: ' . $lockReason : 'Locked — ZoneMirror will not sync this row')
             : 'Click to lock this row (ZoneMirror will skip it on every apply)'),
-        $locked ? 'glyphicon-lock' : 'glyphicon-unchecked',
+        // Unicode padlock pair — Jupiter's glyphicon set doesn't ship
+        // glyphicon-unchecked (only glyphicon-check) so we can't pair a
+        // locked/unlocked icon from there. Emojis render natively in
+        // every modern OS and don't depend on the chrome's font.
+        $locked ? '🔒' : '🔓',
         $locked ? 'Locked' : '',
     );
 
