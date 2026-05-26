@@ -10,13 +10,3 @@ parameters:
   excludePaths:
     - vendor
   treatPhpDocTypesAsCertain: false
-  # The $stop flag in WorkerLoop is mutated by a pcntl_signal handler at
-  # runtime, which phpstan cannot model — every check it makes on the
-  # flag's value looks like dead code. Keep the loop ignores below stable
-  # without making them tracked against the exact line, since the analyser
-  # phrases the message differently depending on the build.
-  reportUnmatchedIgnoredErrors: false
-  ignoreErrors:
-    -
-      message: '#If condition is always false#'
-      path: src/Interface/Worker/WorkerLoop.php
