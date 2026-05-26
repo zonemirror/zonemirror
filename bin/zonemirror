@@ -8,6 +8,7 @@
 #   zonemirror status             Daemon, hook, and queue health snapshot.
 #   zonemirror auto-update on|off Enable/disable the systemd auto-update timer.
 #   zonemirror logs [-n N]        Tail the plugin log (default: 50 lines).
+#   zonemirror local-dmarc <sub>  Local /var/named DMARC rewrite (status|preview|apply|revert|enable|disable).
 #   zonemirror help               Show this help.
 #
 # All update operations require root.
@@ -175,7 +176,24 @@ cmd_logs() {
 }
 
 cmd_help() {
-  sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+# `local-dmarc` delegates to a PHP worker so the actual rewrite logic
+# stays in /opt/zonemirror/src and gets unit-tested. Only the privilege
+# check + dispatch is in bash. Status/preview are read-only (allowed
+# without root); apply / revert / enable / disable mutate state and
+# require root.
+cmd_local_dmarc() {
+  local worker="$PREFIX/bin/local-dmarc-cli.php"
+  if [[ ! -f "$worker" ]]; then
+    die "local-dmarc worker missing at $worker (reinstall the plugin)"
+  fi
+  local sub="${1:-status}"
+  case "$sub" in
+    apply|revert|enable|disable) require_root ;;
+  esac
+  /usr/local/cpanel/3rdparty/bin/php "$worker" "$@"
 }
 
 main() {
@@ -188,6 +206,7 @@ main() {
     status)       cmd_status "$@" ;;
     auto-update)  cmd_auto_update "$@" ;;
     logs)         cmd_logs "$@" ;;
+    local-dmarc)  cmd_local_dmarc "$@" ;;
     help|-h|--help) cmd_help ;;
     *)            die "unknown subcommand: $sub (try: zonemirror help)" ;;
   esac
