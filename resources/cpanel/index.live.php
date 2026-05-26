@@ -133,13 +133,30 @@ if ($autoRefresh) {
   .zm-pill.noop    { background: #f0f0f0; color: #999; }
 
   /* filter chips */
-  .zm-filter { display: flex; gap: 0.4rem; margin: 0.75rem 0 1rem; flex-wrap: wrap; }
+  .zm-filter { display: flex; gap: 0.4rem; margin: 0.75rem 0 0.4rem; flex-wrap: wrap; }
   .zm-filter button {
     background: #fff; border: 1px solid #d4d4d4; border-radius: 999px;
     padding: 0.3rem 0.85rem; font-size: 0.85em; cursor: pointer; color: #555;
   }
   .zm-filter button.active { background: #1f5fa6; border-color: #1f5fa6; color: #fff; }
   .zm-filter button:hover:not(.active) { background: #f5f5f5; }
+
+  /* selection toolbar — link-style buttons so it reads as a row of
+     actions, not a second set of filter chips */
+  .zm-select-row {
+    display: flex; gap: 0.4rem; margin: 0 0 1rem; flex-wrap: wrap;
+    align-items: center; font-size: 0.85em; color: #777;
+  }
+  .zm-select-label { color: #777; margin-right: 0.2rem; }
+  .zm-select-row .zm-link {
+    background: none; border: 0; padding: 0.15rem 0.4rem; cursor: pointer;
+    color: #1f5fa6; font-size: 0.92em; text-decoration: underline;
+    text-underline-offset: 2px; font-family: inherit;
+  }
+  .zm-select-row .zm-link:hover { color: #154a85; }
+  .zm-select-row .zm-link-muted { color: #999; }
+  .zm-select-row .zm-link-muted:hover { color: #555; }
+  .zm-select-sep { color: #d4d4d4; padding: 0 0.2rem; }
 
   /* PR-style diff cards */
   .zm-cards { display: flex; flex-direction: column; gap: 0.75rem; }
@@ -232,35 +249,6 @@ if ($autoRefresh) {
   .zm-cloud-proxied { color: #f48120; }   /* Cloudflare orange */
   .zm-cloud-dnsonly { color: #aaa; }      /* muted grey */
 
-  /* compact list for already-matching records — uniform mini-rows */
-  details.zm-identical { margin-top: 1rem; border: 1px solid #eee; border-radius: 6px; }
-  details.zm-identical > summary {
-    padding: 0.6rem 0.85rem; cursor: pointer; color: #666; background: #fafafa;
-    list-style: none;
-  }
-  details.zm-identical > summary::-webkit-details-marker { display: none; }
-  details.zm-identical > summary::before { content: "▶ "; font-size: 0.75em; color: #aaa; }
-  details.zm-identical[open] > summary::before { content: "▼ "; }
-  .zm-noop-list { display: flex; flex-direction: column; }
-  .zm-noop-row {
-    display: flex; gap: 0.75rem; align-items: baseline;
-    padding: 0.4rem 0.85rem; border-top: 1px solid #f0f0f0;
-    font-size: 0.86em; color: #777;
-  }
-  .zm-noop-row:first-child { border-top: 0; }
-  .zm-noop-row .t {
-    font-weight: 600; color: #555; min-width: 52px;
-    font-size: 0.78em; text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .zm-noop-row .n {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: #555; word-break: break-all; min-width: 30%; max-width: 40%;
-  }
-  .zm-noop-row .v {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    color: #999; word-break: break-all; flex: 1;
-  }
-
   /* sticky apply bar */
   .zm-sticky {
     position: sticky; bottom: 0;
@@ -335,8 +323,6 @@ if ($autoRefresh) {
 </style>
 
 <div class="body-content zonemirror-wrap">
-  <h2>ZoneMirror</h2>
-
   <?php if (!$vm['allowed']): ?>
     <div class="callout callout-warning">
       <strong>This plugin is not available for your account.</strong>
@@ -485,32 +471,37 @@ if ($autoRefresh) {
       <button type="button" data-filter="all">All</button>
     </div>
 
+    <div class="zm-select-row">
+      <span class="zm-select-label">Selection:</span>
+      <button type="button" class="zm-link" data-select="visible">Select shown</button>
+      <button type="button" class="zm-link" data-select="all">Select all (<?= $cCreate + $cUpdate + $cDelete ?>)</button>
+      <button type="button" class="zm-link" data-select="cpanel_only">Creates only</button>
+      <button type="button" class="zm-link" data-select="different">Updates only</button>
+      <button type="button" class="zm-link" data-select="cloudflare_only">Deletes only</button>
+      <span class="zm-select-sep">|</span>
+      <button type="button" class="zm-link zm-link-muted" data-select="none">Clear</button>
+    </div>
+
     <form method="post" id="zm-diff-form">
       <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
       <input type="hidden" name="action" value="apply">
 
       <div class="zm-cards">
         <?php
-        // Order actionable rows: updates first, then creates, then deletes —
-        // matches the visual weight of each action (yellow → green → red).
-        foreach ([DnsDiff::STATUS_DIFFERENT, DnsDiff::STATUS_CPANEL_ONLY, DnsDiff::STATUS_CLOUDFLARE_ONLY] as $st) {
+        // Order: updates first (yellow), then creates (green), deletes (red),
+        // then identical (grey). Visibility is filter-driven, not collapsed.
+        foreach ([
+            DnsDiff::STATUS_DIFFERENT,
+            DnsDiff::STATUS_CPANEL_ONLY,
+            DnsDiff::STATUS_CLOUDFLARE_ONLY,
+            DnsDiff::STATUS_IDENTICAL,
+        ] as $st) {
             foreach ($byStatus[$st] as $e) {
                 echo zm_render_card($e, $h);
             }
         }
         ?>
       </div>
-
-      <?php if ($cIdent > 0): ?>
-        <details class="zm-identical" id="zm-identical">
-          <summary><?= $cIdent ?> records already match Cloudflare</summary>
-          <div class="zm-cards" style="padding: 0.6rem 0.85rem 0.85rem;">
-            <?php foreach ($byStatus[DnsDiff::STATUS_IDENTICAL] as $e): ?>
-              <?= zm_render_card($e, $h) ?>
-            <?php endforeach; ?>
-          </div>
-        </details>
-      <?php endif; ?>
 
       <div class="zm-sticky">
         <div class="info">
@@ -593,11 +584,10 @@ if ($autoRefresh) {
         }
       });
 
-      // Filter chips. "actionable" hides identical, "identical" hides the
-      // rest. Identical rows live in a <details> disclosure rather than as
-      // cards, so we toggle that too.
+      // Filter chips. "actionable" hides identical; other filters show the
+      // matching status. Identical rows are normal cards in the same flow,
+      // toggled like the rest.
       var chips = document.querySelectorAll('.zm-filter button');
-      var identBlock = document.getElementById('zm-identical');
       function applyFilter(f) {
         chips.forEach(function(x) {
           x.classList.toggle('active', x.dataset.filter === f);
@@ -610,14 +600,54 @@ if ($autoRefresh) {
             (f === s);
           card.style.display = show ? '' : 'none';
         });
-        if (identBlock) {
-          identBlock.style.display = (f === 'all' || f === 'identical') ? '' : 'none';
-        }
       }
       chips.forEach(function(b) {
         b.addEventListener('click', function() { applyFilter(b.dataset.filter); });
       });
       applyFilter('actionable');
+
+      // Bulk selection. Each button targets a different subset of cards;
+      // identical rows are skipped (their checkbox is hidden anyway).
+      // "Clear" also resets pending proxy overrides so the user has one
+      // single Undo affordance instead of two.
+      document.querySelectorAll('.zm-select-row .zm-link').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          var mode = btn.dataset.select;
+          if (mode === 'none') {
+            form.querySelectorAll('input[name="push_keys[]"], input[name="delete_keys[]"]').forEach(function(cb) {
+              cb.checked = false;
+              cb.dataset.userChecked = '0';
+            });
+            // Reset proxy toggles back to their original state.
+            document.querySelectorAll('.zm-toggle-proxy[data-overridden="1"]').forEach(function(t) {
+              if (t.dataset.state !== t.dataset.original) {
+                t.click();
+              }
+            });
+            refresh();
+
+            return;
+          }
+
+          document.querySelectorAll('.zm-card').forEach(function(card) {
+            var hidden = card.style.display === 'none';
+            var status = card.dataset.status;
+            var pickThis =
+              (mode === 'visible' && !hidden && status !== 'identical') ||
+              (mode === 'all' && status !== 'identical') ||
+              (mode === status);
+            if (!pickThis) {
+              return;
+            }
+            var cb = card.querySelector('input[name="push_keys[]"], input[name="delete_keys[]"]');
+            if (cb) {
+              cb.checked = true;
+              cb.dataset.userChecked = '1';
+            }
+          });
+          refresh();
+        });
+      });
 
       // Per-record proxy toggle. The button's data-state holds the
       // currently-displayed proxied flag (0/1); data-original is what came
