@@ -479,21 +479,21 @@ if ($autoRefresh) {
     border-radius: 4px; font-family: inherit;
   }
   .zm-lock-btn:hover { background: rgba(0,0,0,0.05); color: #555; }
-  .zm-lock-btn .zm-lock-icon { display: inline-flex; line-height: 0; }
-  .zm-lock-btn .zm-lock-svg { width: 14px; height: 14px; display: none; }
-  /* Show the open lock when unlocked, the closed lock when locked.
+  /* Show the open icon when unlocked, the closed one when locked.
      On hover/focus, swap to the icon that previews what the click
-     will do — open lock on a locked row, closed on an unlocked one. */
-  .zm-lock-btn[data-locked="0"] .zm-lock-svg-open   { display: inline-block; }
-  .zm-lock-btn[data-locked="0"]:hover .zm-lock-svg-open,
-  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-svg-open { display: none; }
-  .zm-lock-btn[data-locked="0"]:hover .zm-lock-svg-closed,
-  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-svg-closed { display: inline-block; }
-  .zm-lock-btn[data-locked="1"] .zm-lock-svg-closed { display: inline-block; }
-  .zm-lock-btn[data-locked="1"]:hover .zm-lock-svg-closed,
-  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-svg-closed { display: none; }
-  .zm-lock-btn[data-locked="1"]:hover .zm-lock-svg-open,
-  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-svg-open { display: inline-block; }
+     will do — open on a locked row, closed on an unlocked one. */
+  .zm-lock-btn .zm-lock-closed,
+  .zm-lock-btn .zm-lock-open { display: none; }
+  .zm-lock-btn[data-locked="0"] .zm-lock-open   { display: inline-block; }
+  .zm-lock-btn[data-locked="1"] .zm-lock-closed { display: inline-block; }
+  .zm-lock-btn[data-locked="0"]:hover .zm-lock-open,
+  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-open { display: none; }
+  .zm-lock-btn[data-locked="0"]:hover .zm-lock-closed,
+  .zm-lock-btn[data-locked="0"]:focus-visible .zm-lock-closed { display: inline-block; }
+  .zm-lock-btn[data-locked="1"]:hover .zm-lock-closed,
+  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-closed { display: none; }
+  .zm-lock-btn[data-locked="1"]:hover .zm-lock-open,
+  .zm-lock-btn[data-locked="1"]:focus-visible .zm-lock-open { display: inline-block; }
   .zm-lock-btn[data-locked="1"] {
     color: #6b4c00; background: #fff8e1; border: 1px solid #f4ce6e;
   }
@@ -559,7 +559,7 @@ if ($autoRefresh) {
       <div class="zm-btn-row">
         <button type="button" class="btn btn-default" id="zm-locks-toggle"
                 aria-controls="zm-locks-panel" aria-expanded="false">
-          <span class="glyphicon glyphicon-lock" aria-hidden="true"></span>
+          <i class="fas fa-lock" aria-hidden="true"></i>
           Manage locks
           <span class="zm-locks-count<?= $vm['locks_count'] > 0 ? ' has-locks' : '' ?>"
                 id="zm-locks-count"><?= (int) $vm['locks_count'] ?></span>
@@ -1933,22 +1933,14 @@ function zm_render_card(array $e, callable $h): string
     // it's visible without expanding the body. The JS controller wires
     // up the click to an AJAX toggle_lock POST; on success the card
     // gains/loses data-locked and the checkbox is suppressed.
-    // Two inline SVGs — closed lock and open lock — and CSS decides
-    // which one is shown based on data-locked + :hover. Hand-drawn
-    // Heroicons-style outline, currentColor so it inherits the
-    // button's text colour. Jupiter's glyphicon set is missing an
-    // open-padlock glyph, hence inline SVG instead.
-    $svgClosed = '<svg class="zm-lock-svg zm-lock-svg-closed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        . '<rect x="5" y="11" width="14" height="9" rx="2"/>'
-        . '<path d="M8 11V7a4 4 0 0 1 8 0v4"/>'
-        . '</svg>';
-    $svgOpen = '<svg class="zm-lock-svg zm-lock-svg-open" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-        . '<rect x="5" y="11" width="14" height="9" rx="2"/>'
-        . '<path d="M8 11V7a4 4 0 0 1 7.5-2"/>'
-        . '</svg>';
+    // Two Font Awesome 5 icons — closed and open padlock — and CSS
+    // decides which one to show based on data-locked + :hover. Jupiter
+    // ships FA5 globally so we get a proper icon font for free
+    // (Bootstrap's glyphicon set has fa-lock but not its open counterpart).
     $lockBtn = sprintf(
         '<button type="button" class="zm-lock-btn" data-key="%s" data-locked="%s" title="%s">'
-        . '<span class="zm-lock-icon" aria-hidden="true">%s%s</span>'
+        . '<i class="fas fa-lock zm-lock-closed" aria-hidden="true"></i>'
+        . '<i class="fas fa-lock-open zm-lock-open" aria-hidden="true"></i>'
         . '<span class="zm-lock-label">%s</span>'
         . '</button>',
         $h($key),
@@ -1956,8 +1948,6 @@ function zm_render_card(array $e, callable $h): string
         $h($locked
             ? ($lockReason !== '' ? 'Locked: ' . $lockReason : 'Locked — ZoneMirror will not sync this row')
             : 'Click to lock this row (ZoneMirror will skip it on every apply)'),
-        $svgClosed,
-        $svgOpen,
         $locked ? 'Locked' : '',
     );
 
