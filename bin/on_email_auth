@@ -1,0 +1,232 @@
+#!/usr/local/cpanel/3rdparty/bin/php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Post-hook for the UAPI EmailAuth endpoints (install_spf_records,
+ * apply_dmarc, enable_dkim, install_dkim_private_keys, etc.).
+ *
+ * These do NOT go through UAPI DNS::mass_edit_zone: EmailAuth's admin
+ * module talks to Cpanel::DnsUtils::Install directly, which writes
+ * straight to the BIND zone file without firing any DNS hook. So a
+ * user who hits "Add the suggested records" in the Email Deliverability
+ * page would see the record appear in cPanel but never propagate to
+ * Cloudflare, and the page would keep polling forever with "The server
+ * records have not updated after X seconds." until they gave up.
+ *
+ * Each EmailAuth call's result payload is a list of per-domain action
+ * descriptors whose `msg` follows the format
+ *
+ *     [ACTION:TYPE@NAME:CONTENT]
+ *
+ * (e.g. `[REPLACE:TXT@_dmarc:v=DMARC1; p=quarantine]`). We parse it and
+ * either enqueue an Upsert (ADD / REPLACE) or fall back to flipping the
+ * user's sync_state to pending_diff so the daemon's next compute cycle
+ * picks up whatever happened. The fallback also covers DKIM enables
+ * whose msg is `[no changes needed]` or whose content is unknown to us
+ * (the private/public key was just generated and the TXT body lives in
+ * the zone file but is not echoed in the API result).
+ */
+
+use ZoneMirror\Domain\DnsEvent;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Infrastructure\Logging\FileLogger;
+use ZoneMirror\Infrastructure\Logging\LogLevel;
+use ZoneMirror\Infrastructure\Mapping\CpanelToCloudflareMapper;
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
+use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
+use ZoneMirror\Infrastructure\Storage\KeyStore;
+use ZoneMirror\Infrastructure\Storage\Paths;
+use ZoneMirror\Infrastructure\Storage\SystemConfigStorage;
+use ZoneMirror\Infrastructure\Storage\UserConfigMetadataReader;
+use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
+use ZoneMirror\Interface\Hook\HookPayloadParser;
+
+$autoload = __DIR__ . '/../vendor/autoload.php';
+if (!is_file($autoload)) {
+    exit(0);
+}
+require $autoload;
+
+$raw = stream_get_contents(STDIN);
+$payload = is_string($raw) ? (json_decode($raw, true) ?: []) : [];
+if (!is_array($payload)) {
+    exit(0);
+}
+
+$user = (string) (posix_getpwuid(posix_geteuid())['name'] ?? '');
+if ($user === '' || $user === 'root') {
+    exit(0);
+}
+
+$log = new FileLogger(Paths::userLogFile($user), LogLevel::Info);
+
+try {
+    $meta = UserConfigMetadataReader::read($user);
+    if (!$meta['enabled'] || $meta['zone_id'] === '') {
+        exit(0);
+    }
+    $hasCredentialPath = $meta['has_token']
+        || $meta['source'] === UserConfigStorage::SOURCE_ADMIN;
+    if (!$hasCredentialPath) {
+        exit(0);
+    }
+    $systemStorage = new SystemConfigStorage();
+    if (!$systemStorage->isUserAllowed($user)) {
+        exit(0);
+    }
+    $systemDefaults = $systemStorage->load();
+    $defaults = [
+        'proxied'  => $meta['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
+        'ttl'      => $systemDefaults['defaults']['ttl'],
+        'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
+    ];
+
+    $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+    $args = is_array($data['args'] ?? null) ? $data['args'] : [];
+    $func = (string) ($args['cpanel_jsonapi_func'] ?? '');
+    $rawResult = $data['result'] ?? null;
+    $resultList = is_array($rawResult) ? $rawResult : [];
+
+    $mapper = new CpanelToCloudflareMapper();
+    $queue = new SqliteQueue($user);
+    $now = time();
+    $upserted = 0;
+    $needsRecompute = false;
+
+    foreach ($resultList as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        $domain = (string) ($row['domain'] ?? '');
+        if ($domain === '') {
+            continue;
+        }
+        // Only sync events for the zone we mirror — a user with multiple
+        // addon domains may have invoked EmailAuth for one that ZoneMirror
+        // is not configured to touch.
+        if (strcasecmp(rtrim($domain, '.'), rtrim($meta['zone_name'], '.')) !== 0) {
+            continue;
+        }
+        if ((int) ($row['status'] ?? 0) !== 1) {
+            continue;
+        }
+
+        $parsed = parse_emailauth_msg((string) ($row['msg'] ?? ''), $domain);
+        if ($parsed === null) {
+            // Unparseable msg ("[no changes needed]", or a DKIM enable
+            // whose content we can't see in the payload) — let the
+            // daemon recompute the diff to pick up whatever changed.
+            $needsRecompute = true;
+
+            continue;
+        }
+        if ($parsed['action'] === 'DELETE') {
+            $needsRecompute = true;
+
+            continue;
+        }
+        if ($parsed['action'] !== 'ADD' && $parsed['action'] !== 'REPLACE') {
+            continue;
+        }
+
+        $normalised = [
+            'type'    => $parsed['type'],
+            'name'    => $parsed['name'],
+            'ttl'     => 1,
+            'content' => $parsed['content'],
+        ];
+        $dns = $mapper->map($normalised, $defaults);
+        if ($dns === null) {
+            $needsRecompute = true;
+
+            continue;
+        }
+        $queue->enqueue(new DnsEvent(
+            domain: $domain,
+            action: EventAction::Upsert,
+            record: $dns,
+            idempotencyKey: HookPayloadParser::idempotencyKey('upsert', $domain, $normalised),
+            createdAt: $now,
+        ));
+        $upserted++;
+    }
+
+    if ($needsRecompute) {
+        $storage = new UserConfigStorage(
+            new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
+        );
+        $cfg = $storage->load($user);
+        if ($cfg['enabled']) {
+            $storage->save($user, [
+                'enabled'    => $cfg['enabled'],
+                'zone_id'    => $cfg['zone_id'],
+                'zone_name'  => $cfg['zone_name'],
+                'defaults'   => $cfg['defaults'],
+                'source'     => $cfg['source'],
+                'token'     => $cfg['token'],
+                'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
+            ]);
+        }
+    }
+
+    if ($upserted > 0 || $needsRecompute) {
+        $log->info('emailauth hook fanned out', [
+            'func'      => $func,
+            'user'      => $user,
+            'upserted'  => $upserted,
+            'recompute' => $needsRecompute,
+        ]);
+    }
+} catch (Throwable $e) {
+    @file_put_contents(
+        Paths::userLogFile($user),
+        json_encode([
+            'ts'    => date('c'),
+            'level' => 'error',
+            'msg'   => 'emailauth hook failed',
+            'ctx'   => ['error' => $e->getMessage()],
+        ]) . "\n",
+        FILE_APPEND
+    );
+}
+exit(0);
+
+/**
+ * Parse cPanel's EmailAuth result `msg` of the form
+ *
+ *     [ACTION:TYPE@NAME:CONTENT]
+ *
+ * Returns null when the msg doesn't match (e.g. "[no changes needed]"
+ * or anything else cPanel emits on a NOOP / unknown path). NAME is
+ * either a FQDN with a trailing dot ("example.com.") or a relative
+ * label ("_dmarc") which we expand against $domain.
+ *
+ * @return array{action: string, type: string, name: string, content: string}|null
+ */
+function parse_emailauth_msg(string $msg, string $domain): ?array
+{
+    if (!preg_match('/^\[([A-Z_]+):([A-Z]+)@([^:]+):(.*)\]$/s', $msg, $m)) {
+        return null;
+    }
+    $action  = strtoupper($m[1]);
+    $type    = strtoupper($m[2]);
+    $rawName = $m[3];
+    $content = $m[4];
+
+    if (str_ends_with($rawName, '.')) {
+        $name = rtrim($rawName, '.');
+    } elseif ($rawName === '@' || $rawName === '') {
+        $name = $domain;
+    } else {
+        $name = $rawName . '.' . rtrim($domain, '.');
+    }
+
+    return [
+        'action'  => $action,
+        'type'    => $type,
+        'name'    => $name,
+        'content' => $content,
+    ];
+}

@@ -40,6 +40,20 @@ register() {
 # Note the uppercase "UAPI"; see comment block above.
 register "UAPI::DNS::mass_edit_zone"     "$PREFIX/bin/on_mass_edit_zone"
 
+# Email Deliverability (UAPI EmailAuth::*). These endpoints bypass
+# DNS::mass_edit_zone entirely — EmailAuth's admin module talks
+# straight to Cpanel::DnsUtils::Install, which writes the zone file
+# without firing any DNS hook. Hook the UAPI dispatch so we still see
+# the SPF / DMARC / DKIM mutations that the "Add the suggested
+# records" button triggers.
+register "UAPI::EmailAuth::install_spf_records"      "$PREFIX/bin/on_email_auth"
+register "UAPI::EmailAuth::apply_dmarc"              "$PREFIX/bin/on_email_auth"
+register "UAPI::EmailAuth::enable_dkim"              "$PREFIX/bin/on_email_auth"
+register "UAPI::EmailAuth::install_dkim_private_keys" "$PREFIX/bin/on_email_auth"
+register "UAPI::EmailAuth::ensure_dkim_keys_exist"   "$PREFIX/bin/on_email_auth"
+register "UAPI::EmailAuth::disable_dkim"             "$PREFIX/bin/on_email_auth"
+register "UAPI::EmailAuth::remove_dmarc"             "$PREFIX/bin/on_email_auth"
+
 # Legacy Api2 surface, best-effort.
 register "Api2::ZoneEdit::add_zone_record"     "$PREFIX/bin/on_add_zone_record"
 register "Api2::ZoneEdit::edit_zone_record"    "$PREFIX/bin/on_edit_zone_record"
