@@ -60,7 +60,7 @@ baseline, walk up one level at a time and check the logs between each step.
 On the cPanel server:
 
 - cPanel & WHM **108+** (Jupiter theme)
-- PHP **8.1+** with `curl`, `pdo_sqlite`, `openssl` (and `sodium` if available)
+- PHP **8.2+** with `curl`, `pdo_sqlite`, `openssl` (and `sodium` if available)
 - `systemd`
 - `composer` available on `$PATH` (or commit `vendor/` into your test branch)
 - Root access (the installer must run as `root`)
@@ -238,7 +238,7 @@ sudo bash /opt/zonemirror/packaging/uninstall.sh --purge
 the modern interpreter under `/usr/local/cpanel/3rdparty/bin/php`. The hook scripts use
 `#!/usr/bin/env php`, so they pick whatever `php` resolves to. Check with
 `head -1 /usr/local/cpanel/3rdparty/zonemirror/bin/on_add_zone_record` and
-`/usr/local/cpanel/3rdparty/bin/php -v`. If the resolved interpreter is below 8.1, either fix
+`/usr/local/cpanel/3rdparty/bin/php -v`. If the resolved interpreter is below 8.2, either fix
 `$PATH` for the hook execution context or pin the shebang.
 
 **`composer install` fails or no composer is on the server.** Either install composer on the box

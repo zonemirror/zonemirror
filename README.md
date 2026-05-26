@@ -12,7 +12,7 @@
 <p align="center">
   <a href="https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/zonemirror/zonemirror/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-blue.svg"></a>
-  <a href="composer.json"><img alt="PHP 8.1+" src="https://img.shields.io/badge/PHP-8.1%2B-777BB4.svg"></a>
+  <a href="composer.json"><img alt="PHP 8.2+" src="https://img.shields.io/badge/PHP-8.2%2B-777BB4.svg"></a>
   <a href="https://docs.cpanel.net/"><img alt="cPanel 108+" src="https://img.shields.io/badge/cPanel-108%2B-orange.svg"></a>
   <a href="https://github.com/zonemirror/zonemirror/releases"><img alt="Release" src="https://img.shields.io/github/v/release/zonemirror/zonemirror?display_name=tag"></a>
   <a href="https://github.com/sponsors/CristianDeluxe"><img alt="Sponsor" src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?logo=githubsponsors&logoColor=white"></a>
@@ -53,7 +53,7 @@ curl -fsSL https://raw.githubusercontent.com/zonemirror/zonemirror/main/packagin
   | sudo bash
 ```
 
-That one line on a cPanel/WHM server (PHP 8.1+, cPanel 108+) downloads the latest signed release,
+That one line on a cPanel/WHM server (PHP 8.2+, cPanel 108+) downloads the latest signed release,
 verifies its SHA-256, installs the plugin under `/usr/local/cpanel/3rdparty/`, registers the
 standardized hooks, starts the systemd daemon, and drops a `zonemirror` CLI in `/usr/local/bin/`.
 
@@ -126,7 +126,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full breakdown.
 ## Requirements
 
 - cPanel & WHM **108+** (Jupiter theme)
-- PHP **8.1+** with `curl`, `pdo_sqlite`, `openssl` (and optionally `sodium`)
+- PHP **8.2+** with `curl`, `pdo_sqlite`, `openssl` (and optionally `sodium`)
 - Linux with `systemd`
 - A Cloudflare **API Token** (not Global API Key) scoped to the zones each user wants to mirror,
   with `Zone:DNS:Edit` + `Zone:Zone:Read`
@@ -356,7 +356,7 @@ release, see [`docs/INSTALL_FROM_SOURCE.md`](docs/INSTALL_FROM_SOURCE.md).
 
 ## Project status
 
-**Beta.** v0.1.x — the architecture is stable and the test suite is green on PHP 8.1 / 8.2 / 8.3,
+**Beta.** v0.1.x — the architecture is stable and the test suite is green on PHP 8.2 / 8.3 / 8.4,
 but the plugin has not yet been battle-tested on a large fleet. Treat it as production-capable with
 monitoring; run `zonemirror status` on a schedule and tail the JSON log.
 
@@ -409,7 +409,7 @@ issues are the fastest path to a resolved bug.
 ## Contributing
 
 PRs welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). The quality gate is `composer check` plus a
-green CI matrix (PHP 8.1 / 8.2 / 8.3).
+green CI matrix (PHP 8.2 / 8.3 / 8.4).
 
 Code of conduct: [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 

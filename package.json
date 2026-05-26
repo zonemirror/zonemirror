@@ -2,7 +2,7 @@
   "name": "zonemirror-formatting",
   "private": true,
   "devDependencies": {
-    "prettier": "^3.8.1"
+    "prettier": "^3.8.3"
   },
   "scripts": {
     "format:prettier": "prettier --write \"**/*.{js,css,scss,md,json,yaml,yml}\"",
