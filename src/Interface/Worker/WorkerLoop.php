@@ -7,6 +7,11 @@ namespace ZoneMirror\Interface\Worker;
 use ZoneMirror\Application\ComputeDiff;
 use ZoneMirror\Application\IndexZones;
 use ZoneMirror\Application\ProcessEvent;
+use ZoneMirror\Domain\DnsDiff;
+use ZoneMirror\Domain\DnsEvent;
+use ZoneMirror\Domain\DnsRecord;
+use ZoneMirror\Domain\EventAction;
+use ZoneMirror\Domain\RecordType;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareException;
 use ZoneMirror\Infrastructure\Cloudflare\ZoneSnapshot;
@@ -49,6 +54,17 @@ final class WorkerLoop
 
     /** @var array<string, SqliteQueue> */
     private array $queueCache = [];
+
+    /**
+     * Per-user last-seen mtime of the zone file. We poll this every cycle
+     * so when something outside our hookable surface area writes to
+     * /var/named/<zone>.db (AutoSSL DCV's _acme-challenge TXT, scripts
+     * that bypass UAPI, future cPanel features we haven't reverse-
+     * engineered yet) we still notice within sleepSeconds and recompute.
+     *
+     * @var array<string, int>
+     */
+    private array $zoneMtime = [];
 
     public function __construct(
         private readonly FileLogger $log,
@@ -140,16 +156,38 @@ final class WorkerLoop
                     continue;
                 }
 
+                // Detect out-of-band writes to /var/named/<zone>.db (DCV
+                // DNS-01, EmailAuth, anything that talks straight to
+                // Cpanel::DnsUtils::Install without going through a UAPI
+                // hook we cover). When the mtime advances we flag the
+                // user as pending_diff so the runDiff below picks the new
+                // state up in the same tick — the daemon doesn't have to
+                // wait another cycle to notice.
+                if ($this->zoneFileChangedSinceLastSeen($user, $userCfg['zone_name'])) {
+                    if (
+                        $userCfg['sync_state'] !== UserConfigStorage::STATE_PENDING_DIFF
+                        && $userCfg['sync_state'] !== UserConfigStorage::STATE_COMPUTING_DIFF
+                    ) {
+                        $this->log->info('worker: zone file changed, forcing diff', [
+                            'user' => $user,
+                            'zone' => $userCfg['zone_name'],
+                        ]);
+                        $this->writeSyncState($userStorage, $user, $userCfg, UserConfigStorage::STATE_PENDING_DIFF);
+                        $userCfg = $userStorage->load($user);
+                    }
+                }
+
                 // Diff review: if the user just connected or asked for a
                 // refresh, recompute the diff against Cloudflare before we
                 // touch the queue. The UI sits on `awaiting_review` until
-                // the user explicitly applies rows; we never auto-mutate.
+                // the user explicitly applies rows; we never auto-mutate —
+                // except for ACME DCV TXTs, which live seconds and must
+                // race their way to Cloudflare or the cert request fails.
                 if ($userCfg['sync_state'] === UserConfigStorage::STATE_PENDING_DIFF) {
                     $this->runDiff($user, $userCfg, $plainToken, $userStorage);
                     $didWork = true;
-                    // Reload to pick up the new state for the rest of this
-                    // iteration (queue processing below still runs).
                     $userCfg = $userStorage->load($user);
+                    $this->autoApplyAcmeChallenges($user, $userCfg);
                 }
 
                 $queue = $this->queueFor($user);
@@ -220,6 +258,187 @@ final class WorkerLoop
         }
 
         return $this->queueCache[$user];
+    }
+
+    /**
+     * Returns true when /var/named/<zone>.db has been touched since the
+     * last time we saw it for this user. The first observation in a
+     * daemon's lifetime never counts as a change — otherwise every
+     * startup would force a full recompute for every enrolled user.
+     */
+    private function zoneFileChangedSinceLastSeen(string $user, string $zoneName): bool
+    {
+        if ($zoneName === '') {
+            return false;
+        }
+        $path = '/var/named/' . $zoneName . '.db';
+        $mtime = @filemtime($path);
+        if ($mtime === false) {
+            return false;
+        }
+        $previous = $this->zoneMtime[$user] ?? null;
+        $this->zoneMtime[$user] = $mtime;
+        if ($previous === null) {
+            return false;
+        }
+
+        return $mtime > $previous;
+    }
+
+    /**
+     * Auto-apply rule for ACME DCV TXTs (_acme-challenge.* TXT records).
+     * cPanel writes them straight to the zone file via
+     * Cpanel::DnsUtils::Install, so no UAPI/Api2 hook ever fires, and
+     * they live for only the few seconds Let's Encrypt's validator needs
+     * to query them. The "review-first" UX that protects normal records
+     * would race the cert request and lose; ACME challenges are safe to
+     * auto-sync because they're owned by cPanel end-to-end, opaque
+     * tokens, and impossible to mistake for anything a human would want
+     * to keep.
+     *
+     * We act on the diff that runDiff just persisted: every entry whose
+     * name starts with `_acme-challenge.` and is either cpanel_only or
+     * cloudflare_only gets enqueued as an Upsert or Delete respectively.
+     * different status (cPanel and CF both have one but the value moved)
+     * gets enqueued as an Upsert too so the latest token wins.
+     *
+     * @param array{enabled: bool, zone_id: string, zone_name: string, defaults: array{proxied: bool}, token: string, source: string, sync_state: string, last_error: string} $cfg
+     */
+    private function autoApplyAcmeChallenges(string $user, array $cfg): void
+    {
+        if (!$cfg['enabled']) {
+            return;
+        }
+        $diff = (new DiffStorage())->load($user);
+        if (!is_array($diff)) {
+            return;
+        }
+        $entries = is_array($diff['entries'] ?? null) ? $diff['entries'] : [];
+        if ($entries === []) {
+            return;
+        }
+
+        $queue = $this->queueFor($user);
+        $now = time();
+        $pushed = 0;
+        $deleted = 0;
+
+        foreach ($entries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $type = strtoupper((string) ($entry['type'] ?? ''));
+            $name = strtolower((string) ($entry['name'] ?? ''));
+            if ($type !== 'TXT') {
+                continue;
+            }
+            if (!$this->isAcmeChallengeName($name)) {
+                continue;
+            }
+            $status = (string) ($entry['status'] ?? '');
+            $key = (string) ($entry['key'] ?? '');
+            if ($key === '') {
+                continue;
+            }
+
+            if ($status === DnsDiff::STATUS_CPANEL_ONLY || $status === DnsDiff::STATUS_DIFFERENT) {
+                $local = is_array($entry['local'] ?? null) ? $entry['local'] : null;
+                if ($local === null) {
+                    continue;
+                }
+                $record = $this->hydrateDnsRecord($local);
+                if ($record === null) {
+                    continue;
+                }
+                $targetId = null;
+                if (is_array($entry['remote'] ?? null) && isset($entry['remote']['id'])) {
+                    $candidate = (string) $entry['remote']['id'];
+                    $targetId = $candidate !== '' ? $candidate : null;
+                }
+                $queue->enqueue(new DnsEvent(
+                    domain: $cfg['zone_name'],
+                    action: EventAction::Upsert,
+                    record: $record,
+                    idempotencyKey: 'acme:' . $now . ':push:' . $key,
+                    createdAt: $now,
+                    targetCloudflareId: $targetId,
+                ));
+                $pushed++;
+            } elseif ($status === DnsDiff::STATUS_CLOUDFLARE_ONLY) {
+                $remote = is_array($entry['remote'] ?? null) ? $entry['remote'] : null;
+                if ($remote === null) {
+                    continue;
+                }
+                $remoteId = (string) ($remote['id'] ?? '');
+                if ($remoteId === '') {
+                    continue;
+                }
+                $placeholder = new DnsRecord(
+                    type: RecordType::TXT,
+                    name: (string) ($remote['name'] ?? $name),
+                    content: isset($remote['content']) ? (string) $remote['content'] : null,
+                    ttl: (int) ($remote['ttl'] ?? 60),
+                    priority: null,
+                    proxied: null,
+                    data: [],
+                );
+                $queue->enqueue(new DnsEvent(
+                    domain: $cfg['zone_name'],
+                    action: EventAction::Delete,
+                    record: $placeholder,
+                    idempotencyKey: 'acme:' . $now . ':del:' . $key,
+                    createdAt: $now,
+                    targetCloudflareId: $remoteId,
+                ));
+                $deleted++;
+            }
+        }
+
+        if ($pushed > 0 || $deleted > 0) {
+            $this->log->info('auto-applying ACME DCV records', [
+                'user'    => $user,
+                'zone'    => $cfg['zone_name'],
+                'pushed'  => $pushed,
+                'deleted' => $deleted,
+            ]);
+        }
+    }
+
+    private function isAcmeChallengeName(string $name): bool
+    {
+        $n = strtolower(rtrim($name, '.'));
+
+        return $n === '_acme-challenge'
+            || str_starts_with($n, '_acme-challenge.');
+    }
+
+    /**
+     * Build a DnsRecord from a diff entry's `local` block (the same shape
+     * the apply UI hydrates from). Returns null when the type is unknown
+     * or required fields are missing.
+     *
+     * @param array<string, mixed> $local
+     */
+    private function hydrateDnsRecord(array $local): ?DnsRecord
+    {
+        $type = RecordType::tryFromString(isset($local['type']) ? (string) $local['type'] : null);
+        if ($type === null) {
+            return null;
+        }
+        $name = (string) ($local['name'] ?? '');
+        if ($name === '') {
+            return null;
+        }
+
+        return new DnsRecord(
+            type: $type,
+            name: $name,
+            content: isset($local['content']) ? (string) $local['content'] : null,
+            ttl: (int) ($local['ttl'] ?? 1),
+            priority: isset($local['priority']) ? (int) $local['priority'] : null,
+            proxied: array_key_exists('proxied', $local) ? (bool) $local['proxied'] : null,
+            data: is_array($local['data'] ?? null) ? $local['data'] : [],
+        );
     }
 
     /**
