@@ -1495,16 +1495,48 @@ function zm_render_card(array $e, callable $h): string
 }
 
 /**
- * Body for an identical card. Just the matching content, no diff lines.
- * Renders the same shape as create/delete bodies so the layout stays
- * consistent when the user expands the "already match" disclosure.
+ * Body for an identical card. Just the matching content plus the same
+ * TTL / proxied / priority strip the create + delete bodies use, so the
+ * user can confirm at a glance that the row really matches in every
+ * dimension (not just content).
  *
  * @param array<string, mixed> $local
  */
 function zm_render_noop_body(array $local, callable $h): string
 {
     $txt = zm_format_record($local);
-    return '<div class="zm-line zm-line-noop">' . zm_cloud_swap($h($txt)) . '</div>';
+    $out = '<div class="zm-line zm-line-noop">' . zm_cloud_swap($h($txt)) . '</div>';
+    $out .= zm_render_meta_strip($local, $h);
+
+    return $out;
+}
+
+/**
+ * Shared meta-line for create / delete / noop cards. Update has its own
+ * change-aware strip in zm_render_update_body(). We list whichever
+ * fields are present and non-null so the line stays short for record
+ * types that don't carry a given attribute (e.g. TXT has no priority).
+ *
+ * @param array<string, mixed> $rec
+ */
+function zm_render_meta_strip(array $rec, callable $h): string
+{
+    $bits = [];
+    $ttl = isset($rec['ttl']) ? (int) $rec['ttl'] : 0;
+    if ($ttl > 0) {
+        $bits[] = '<strong>TTL</strong>: ' . $h(zm_fmt_ttl($ttl));
+    }
+    if (array_key_exists('proxied', $rec) && $rec['proxied'] !== null) {
+        $bits[] = '<strong>Proxy</strong>: ' . zm_fmt_field_value('proxied', $rec['proxied']);
+    }
+    if (array_key_exists('priority', $rec) && $rec['priority'] !== null) {
+        $bits[] = '<strong>Priority</strong>: ' . $h((string) (int) $rec['priority']);
+    }
+    if ($bits === []) {
+        return '';
+    }
+
+    return '<div class="zm-meta">' . zm_cloud_swap(implode(' &nbsp;·&nbsp; ', $bits)) . '</div>';
 }
 
 /**
@@ -1553,11 +1585,8 @@ function zm_render_update_body(array $local, array $remote, callable $h): string
 function zm_render_create_body(array $local, callable $h): string
 {
     $txt = zm_format_record($local);
-    $ttl = isset($local['ttl']) ? (int) $local['ttl'] : 0;
     $out = '<div class="zm-line zm-line-add">+ ' . zm_cloud_swap($h($txt)) . '</div>';
-    if ($ttl > 0) {
-        $out .= '<div class="zm-meta"><strong>TTL</strong>: ' . $h(zm_fmt_ttl($ttl)) . '</div>';
-    }
+    $out .= zm_render_meta_strip($local, $h);
 
     return $out;
 }
@@ -1568,7 +1597,6 @@ function zm_render_create_body(array $local, callable $h): string
 function zm_render_delete_body(array $remote, callable $h): string
 {
     $txt = zm_format_record($remote);
-    $ttl = isset($remote['ttl']) ? (int) $remote['ttl'] : 0;
     // Delete rows are the only destructive action in the diff. Make the
     // intent loud: a banner above the - line says what the user is doing
     // and where the record came from (it wasn't in cPanel, so it must
@@ -1580,9 +1608,7 @@ function zm_render_delete_body(array $remote, callable $h): string
         . 'It was likely added by hand in the Cloudflare dashboard. Ticking the box will remove it.'
         . '</div>';
     $out .= '<div class="zm-line zm-line-del">- ' . zm_cloud_swap($h($txt)) . '</div>';
-    if ($ttl > 0) {
-        $out .= '<div class="zm-meta"><strong>TTL</strong>: ' . $h(zm_fmt_ttl($ttl)) . '</div>';
-    }
+    $out .= zm_render_meta_strip($remote, $h);
 
     return $out;
 }
