@@ -25,6 +25,9 @@ DYNAMICUI_CONF="/usr/local/cpanel/base/frontend/jupiter/dynamicui/dynamicui_${PL
 JUPITER_APP_ICON="/usr/local/cpanel/base/frontend/jupiter/assets/application_icons/${PLUGIN_ID}.png"
 WHM_ADDON_ICON="/usr/local/cpanel/whostmgr/docroot/addon_plugins/${PLUGIN_ID}.png"
 WHM_ADDON_ICON_LIGHT="/usr/local/cpanel/whostmgr/docroot/addon_plugins/${PLUGIN_ID}-light.png"
+CPANEL_ADMINBIN="/usr/local/cpanel/bin/admin/Cpanel/ZoneMirror"
+CPANEL_ADMINBIN_CONF="/usr/local/cpanel/bin/admin/Cpanel/ZoneMirror.conf"
+CPANEL_UAPI_MODULE="/usr/local/cpanel/Cpanel/API/ZoneMirror.pm"
 CLI_SYMLINK="/usr/local/bin/zonemirror"
 LOCAL_REWRITES_FILE="${SYSTEM_DIR}/local-rewrites.json"
 
@@ -137,6 +140,7 @@ if [[ -x /usr/local/cpanel/bin/unregister_appconfig ]]; then
 fi
 
 rm -f "$CLI_SYMLINK" "$DYNAMICUI_CONF" "$JUPITER_APP_ICON" "$WHM_ADDON_ICON" "$WHM_ADDON_ICON_LIGHT"
+rm -f "$CPANEL_ADMINBIN" "$CPANEL_ADMINBIN_CONF" "$CPANEL_UAPI_MODULE"
 rm -rf "$PREFIX" "$LIVEAPI_DIR" "$WHM_DIR" "$ICON_TARGET_DIR"
 
 # Rebuild the Jupiter sprite sheet so the now-stale .icon-zonemirror class

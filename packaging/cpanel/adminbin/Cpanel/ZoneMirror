@@ -1,0 +1,180 @@
+#!/usr/local/cpanel/3rdparty/bin/perl
+
+# /usr/local/cpanel/bin/admin/Cpanel/ZoneMirror
+#
+# Root-side worker for the ZoneMirror plugin. Owns every write to
+# /var/cpanel/zonemirror/enrolled-users, which is root-owned by design
+# (the daemon mmaps the list on every tick; cPanel-user processes
+# running under LSPHP cannot touch it directly).
+#
+# The matching user-facing UAPI module is at
+# /usr/local/cpanel/Cpanel/API/ZoneMirror.pm — it does not write the
+# file itself, it just shells in here via Cpanel::AdminBin::Call::call.
+#
+# Caller-username binding: every action reads the calling user via
+# $self->get_caller_username() (cpwrapd sets this from the privilege-
+# escalation envelope, not from any argument the user can spoof) and
+# refuses to enroll or remove anybody else. A compromised cPanel user
+# can still enroll/unenroll themselves — they could already do that
+# via the WHM admin if it were exposed; the file is harmless beyond
+# its role as a per-user opt-in marker.
+#
+# The deployment story (packaging/install.sh):
+#   - This file → /usr/local/cpanel/bin/admin/Cpanel/ZoneMirror, 0700 root.
+#   - ZoneMirror.conf next to it → 0644 root, declares mode=full.
+
+package bin::admin::Cpanel::ZoneMirror;
+
+use strict;
+use warnings;
+
+use parent -norequire, 'Cpanel::AdminBin::Script::Call';
+
+use Cpanel::AdminBin::Script::Call ();
+use Cpanel::SafeFile               ();
+
+use Fcntl ();
+
+use constant {
+    ENROLLED_FILE => '/var/cpanel/zonemirror/enrolled-users',
+    SYSTEM_DIR    => '/var/cpanel/zonemirror',
+};
+
+# Alarm at 30s — the operation is a single small atomic file write;
+# anything past a few seconds is a stuck lock and the caller should
+# see an error rather than a hung Connect button.
+__PACKAGE__->run( alarm => 30 ) unless caller();
+
+sub _actions {
+    return qw(ENROLL UNENROLL LIST);
+}
+
+sub ENROLL {
+    my ($self) = @_;
+    my $user = $self->get_caller_username();
+    _require_real_user($user);
+    _ensure_system_dir();
+    _mutate_list( sub {
+        my $list_ref = shift;
+        return if grep { $_ eq $user } @$list_ref;
+        push @$list_ref, $user;
+    } );
+
+    return { ok => 1, user => $user, action => 'enroll' };
+}
+
+sub UNENROLL {
+    my ($self) = @_;
+    my $user = $self->get_caller_username();
+    _require_real_user($user);
+    _ensure_system_dir();
+    _mutate_list( sub {
+        my $list_ref = shift;
+        @$list_ref = grep { $_ ne $user } @$list_ref;
+    } );
+
+    return { ok => 1, user => $user, action => 'unenroll' };
+}
+
+# Returned-as-array list so the UAPI wrapper can echo the current
+# state back to the cPanel UI without re-reading the file in a
+# second hop. The list is not secret; the WHM admin already shows it.
+sub LIST {
+    my ($self) = @_;
+    return { ok => 1, users => [ _read_list() ] };
+}
+
+#--- helpers ---------------------------------------------------------
+
+sub _require_real_user {
+    my ($user) = @_;
+    die "Refusing to operate on missing caller-username\n"
+        if !defined $user || $user eq '' || $user eq 'root';
+
+    # Caller username comes from cpwrapd, not from a user-controllable
+    # argument, but a `..` or `/` would still be a code smell that would
+    # cascade into the file path below if any future refactor ever lets
+    # an attacker-controlled string slip into `$user`.
+    die "Refusing to operate on suspicious username: $user\n"
+        if $user =~ m{[^A-Za-z0-9._-]};
+
+    return 1;
+}
+
+sub _ensure_system_dir {
+    if ( !-d SYSTEM_DIR() ) {
+        mkdir SYSTEM_DIR(), 0755
+            or die "Unable to create " . SYSTEM_DIR() . ": $!\n";
+    }
+    return;
+}
+
+sub _read_list {
+    my $path = ENROLLED_FILE();
+    return () unless -f $path;
+    open my $fh, '<', $path or die "Unable to read $path: $!\n";
+    my @lines;
+    while ( my $line = <$fh> ) {
+        chomp $line;
+        $line =~ s/^\s+|\s+$//g;
+        push @lines, $line if $line ne '';
+    }
+    close $fh;
+    return @lines;
+}
+
+# Atomic update: read → mutate → rewrite via Cpanel::SafeFile so a
+# concurrent ENROLL/UNENROLL from another user doesn't clobber the
+# list. The CGI write also goes via a `.tmp` rename, so partial
+# states never appear on disk.
+sub _mutate_list {
+    my ($mutator) = @_;
+    my $path = ENROLLED_FILE();
+
+    my $lock = Cpanel::SafeFile::safeopen( my $fh_r, '+<', $path );
+    if ( !$lock ) {
+        # File didn't exist yet — open in create mode then re-lock.
+        open my $touch, '>>', $path or die "Unable to create $path: $!\n";
+        close $touch;
+        chmod 0644, $path;
+        $lock = Cpanel::SafeFile::safeopen( $fh_r, '+<', $path )
+            or die "Unable to lock $path: $!\n";
+    }
+
+    my @list;
+    while ( my $line = <$fh_r> ) {
+        chomp $line;
+        $line =~ s/^\s+|\s+$//g;
+        push @list, $line if $line ne '';
+    }
+    $mutator->( \@list );
+    @list = sort { $a cmp $b } _dedup(@list);
+
+    my $tmp = $path . '.tmp';
+    open my $fh_w, '>', $tmp or do {
+        Cpanel::SafeFile::safeclose( $fh_r, $lock );
+        die "Unable to write $tmp: $!\n";
+    };
+    print {$fh_w} join( "\n", @list ), "\n";
+    close $fh_w or do {
+        Cpanel::SafeFile::safeclose( $fh_r, $lock );
+        unlink $tmp;
+        die "Unable to flush $tmp: $!\n";
+    };
+    chmod 0644, $tmp;
+    rename $tmp, $path or do {
+        Cpanel::SafeFile::safeclose( $fh_r, $lock );
+        unlink $tmp;
+        die "Unable to rename $tmp -> $path: $!\n";
+    };
+
+    Cpanel::SafeFile::safeclose( $fh_r, $lock );
+    return;
+}
+
+sub _dedup {
+    my %seen;
+    return grep { !$seen{$_}++ } @_;
+}
+
+1;

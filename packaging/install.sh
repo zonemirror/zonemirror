@@ -18,6 +18,8 @@ ICON_TARGET_DIR="/usr/local/cpanel/base/unprotected/${PLUGIN_ID}"
 DYNAMICUI_DIR="/usr/local/cpanel/base/frontend/jupiter/dynamicui"
 JUPITER_APP_ICONS_DIR="/usr/local/cpanel/base/frontend/jupiter/assets/application_icons"
 WHM_ADDON_PLUGINS_DIR="/usr/local/cpanel/whostmgr/docroot/addon_plugins"
+CPANEL_ADMINBIN_DIR="/usr/local/cpanel/bin/admin/Cpanel"
+CPANEL_UAPI_DIR="/usr/local/cpanel/Cpanel/API"
 CLI_SYMLINK="/usr/local/bin/zonemirror"
 
 require_root() {
@@ -200,6 +202,31 @@ install_cli() {
   ln -sfn "$PREFIX/bin/zonemirror" "$CLI_SYMLINK"
 }
 
+install_cpanel_adminbin() {
+  # The cPanel user-side UI (resources/cpanel/index.live.php) runs as
+  # the cPanel user under LSPHP and cannot write
+  # /var/cpanel/zonemirror/enrolled-users, which is root-owned by
+  # design. The UAPI module + adminbin pair below escalates the
+  # `enroll`/`unenroll` writes to root, refusing to touch any user
+  # other than the caller's REMOTE_USER.
+  local src_root
+  src_root="$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)"
+
+  [[ -d "$CPANEL_ADMINBIN_DIR" ]] || mkdir -p "$CPANEL_ADMINBIN_DIR"
+  [[ -d "$CPANEL_UAPI_DIR" ]] || mkdir -p "$CPANEL_UAPI_DIR"
+
+  install -m 0700 -o root -g root \
+    "$src_root/packaging/cpanel/adminbin/Cpanel/ZoneMirror" \
+    "$CPANEL_ADMINBIN_DIR/ZoneMirror"
+  install -m 0644 -o root -g root \
+    "$src_root/packaging/cpanel/adminbin/Cpanel/ZoneMirror.conf" \
+    "$CPANEL_ADMINBIN_DIR/ZoneMirror.conf"
+
+  install -m 0644 -o root -g root \
+    "$src_root/packaging/cpanel/api/ZoneMirror.pm" \
+    "$CPANEL_UAPI_DIR/ZoneMirror.pm"
+}
+
 fix_permissions() {
   chown -R root:root "$PREFIX" "$SYSTEM_DIR"
   find "$PREFIX" -type d -exec chmod 0755 {} \;
@@ -232,6 +259,7 @@ main() {
   echo "==> Installing ${PLUGIN_NAME}"
   stage_files
   install_composer_deps
+  install_cpanel_adminbin
   fix_permissions
   register_hooks
   install_service

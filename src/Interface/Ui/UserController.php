@@ -80,6 +80,25 @@ final class UserController
     private ?ZoneIndex $zoneIndex;
 
     /**
+     * Privileged writer for /var/cpanel/zonemirror/enrolled-users.
+     *
+     * In cPanel-user context the central enrolled-users file is root-
+     * owned (the daemon mmaps it on every tick) and a non-root LSPHP
+     * process cannot touch it — so the entry point at
+     * resources/cpanel/index.live.php injects a closure here that
+     * shells the write out through `$cpanel->uapi('ZoneMirror',
+     * 'enroll'/'unenroll')`, which talks to the matching adminbin
+     * binary at /usr/local/cpanel/bin/admin/Cpanel/ZoneMirror.
+     *
+     * When the controller is constructed in a root context (the daemon
+     * or unit tests that don't simulate LSPHP), this stays null and
+     * EnrolledUsers writes the file directly — no UAPI round-trip.
+     *
+     * @var (callable(string): void)|null
+     */
+    private $enrollmentBackend = null;
+
+    /**
      * Side-channel from the last applySelected() call so the JSON response
      * for an AJAX Apply can echo back the exact card keys that were
      * enqueued (and which ones were skipped). The front-end uses this list
@@ -90,16 +109,46 @@ final class UserController
      */
     private ?array $lastApplyMeta = null;
 
+    /**
+     * @param (callable(string): void)|null $enrollmentBackend
+     */
     public function __construct(
         ?UserConfigStorage $storage = null,
         ?FileLogger $log = null,
         ?ZoneIndex $zoneIndex = null,
+        ?callable $enrollmentBackend = null,
     ) {
         $this->storage = $storage;
         $this->log = $log;
         $this->zoneIndex = $zoneIndex;
         $this->systemStorage = new SystemConfigStorage();
         $this->enrolled = new EnrolledUsers();
+        $this->enrollmentBackend = $enrollmentBackend;
+    }
+
+    /**
+     * Mark $user as opted-in. Routes through the privileged adminbin
+     * when the controller is running in cPanel-user context; otherwise
+     * writes the file directly via EnrolledUsers.
+     */
+    private function markEnrolled(string $user): void
+    {
+        if ($this->enrollmentBackend !== null) {
+            ($this->enrollmentBackend)('enroll');
+
+            return;
+        }
+        $this->enrolled->enroll($user);
+    }
+
+    private function markUnenrolled(string $user): void
+    {
+        if ($this->enrollmentBackend !== null) {
+            ($this->enrollmentBackend)('unenroll');
+
+            return;
+        }
+        $this->enrolled->remove($user);
     }
 
     private function storageFor(string $user): UserConfigStorage
@@ -343,7 +392,7 @@ final class UserController
             'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
         ]);
 
-        $this->enrolled->enroll($user);
+        $this->markEnrolled($user);
         $this->logFor($user)->info('domain connected via admin token', [
             'user' => $user,
             'domain' => $domain,
@@ -899,7 +948,7 @@ final class UserController
         // scratch.
         (new DiffStorage())->remove($user);
 
-        $this->enrolled->remove($user);
+        $this->markUnenrolled($user);
         $this->logFor($user)->info('disconnected', ['user' => $user]);
 
         return [true, [], 'Disconnected. No more changes will be pushed to Cloudflare.'];
@@ -954,9 +1003,9 @@ final class UserController
         ]);
 
         if ($enabled) {
-            $this->enrolled->enroll($user);
+            $this->markEnrolled($user);
         } else {
-            $this->enrolled->remove($user);
+            $this->markUnenrolled($user);
         }
 
         $this->logFor($user)->info('user config saved', [
