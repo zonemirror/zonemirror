@@ -61,7 +61,33 @@ if ($user === '') {
 
 $allDomains = zm_list_user_domains($cpanel, $user);
 
-$controller = new UserController();
+// The cPanel user-side process runs under LSPHP as the user and
+// therefore cannot write /var/cpanel/zonemirror/enrolled-users (which
+// is root-owned by design; the daemon mmaps it on every tick). Route
+// every enroll/unenroll through the matching UAPI module, which talks
+// to /usr/local/cpanel/bin/admin/Cpanel/ZoneMirror as root.
+$enrollmentBackend = static function (string $action) use ($cpanel): void {
+    $func = $action === 'enroll' ? 'enroll' : 'unenroll';
+    $resp = $cpanel->uapi('ZoneMirror', $func);
+    $data = zm_unwrap_uapi_data($resp);
+    // UAPI returns the function's data on success and a populated
+    // `errors` array on failure. Surface either as a plain exception so
+    // UserController's caller path treats it like any other write
+    // failure.
+    $errors = is_array($resp) ? ($resp['cpanelresult']['errors'] ?? null) : null;
+    if (is_array($errors) && $errors !== []) {
+        throw new \RuntimeException(
+            'UAPI ZoneMirror::' . $func . ' failed: ' . implode('; ', array_map('strval', $errors))
+        );
+    }
+    if (!is_array($data) || ($data['ok'] ?? null) !== 1) {
+        throw new \RuntimeException(
+            'UAPI ZoneMirror::' . $func . ' returned an unexpected response.'
+        );
+    }
+};
+
+$controller = new UserController(null, null, null, $enrollmentBackend);
 
 // JSON read-only endpoint used by the live progress poll. Short-circuits
 // before any cPanel chrome is written so the response is pure JSON. The
