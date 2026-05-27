@@ -128,13 +128,24 @@ final class Paths
     }
 
     /**
-     * Per-user diff file the daemon computes and the cPanel UI consumes.
-     * Lives under the system tree (not the user's home) so the daemon
-     * doesn't need to follow user-owned symlinks to write it.
+     * Per-(user, zone) diff file. Each zone has its own diff.json under
+     * `zones/<zone_id>/` so a user with N synced zones holds N
+     * independent review states without one zone's compute clobbering
+     * another's. Lives under the system tree (not the user's home) so
+     * the daemon doesn't have to follow user-owned symlinks to write it.
+     *
+     * When $zoneId is empty, returns the legacy v1 path
+     * (`users/<user>/diff.json`) so the readers can fall back to it for
+     * pre-migration data. The migrator and current writers always pass
+     * a non-empty zone id.
      */
-    public static function userDiffFile(string $user): string
+    public static function userDiffFile(string $user, string $zoneId = ''): string
     {
-        return self::systemDir() . '/users/' . $user . '/diff.json';
+        if ($zoneId === '') {
+            return self::systemDir() . '/users/' . $user . '/diff.json';
+        }
+
+        return self::systemDir() . '/users/' . $user . '/zones/' . $zoneId . '/diff.json';
     }
 
     public static function userDir(string $user): string
@@ -162,9 +173,19 @@ final class Paths
         return self::userDir($user) . '/log.txt';
     }
 
-    public static function userLocksFile(string $user): string
+    /**
+     * Per-(user, zone) lock file. Each zone has its own locks.json
+     * under `zones/<zone_id>/` so locking a record name in one zone
+     * doesn't leak into another. When $zoneId is empty, returns the
+     * legacy single-file path for fallback reads of pre-migration data.
+     */
+    public static function userLocksFile(string $user, string $zoneId = ''): string
     {
-        return self::userDir($user) . '/locks.json';
+        if ($zoneId === '') {
+            return self::userDir($user) . '/locks.json';
+        }
+
+        return self::userDir($user) . '/zones/' . $zoneId . '/locks.json';
     }
 
     private static function userHome(string $user): string

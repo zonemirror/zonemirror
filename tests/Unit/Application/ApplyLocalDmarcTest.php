@@ -129,10 +129,14 @@ final class ApplyLocalDmarcTest extends TestCase
     {
         $this->seedConfig(enabled: true);
         $this->seedZone('example.com', "_dmarc\t14400\tIN\tTXT\t\"v=DMARC1\\; p=none\\;\"\n");
-        // Lock _dmarc.example.com for alice
+        // Seed alice's UserConfigStorage with example.com so the lock
+        // path's `cfZoneIdFor` lookup succeeds — locks are now keyed
+        // by (user, CF zone_id), and ApplyLocalDmarc resolves the
+        // zone_id by looking up the cPanel domain in the user's
+        // config.
+        $this->seedAliceConfig('example.com', 'zone-abc');
         $locks = new LockStorage();
-        mkdir($this->userHome . '/.zonemirror', 0700, true);
-        $locks->add('alice', LockStorage::SCOPE_TYPE_NAME, 'TXT', '_dmarc.example.com', null, null, 'managed by Postmaster');
+        $locks->add('alice', 'zone-abc', LockStorage::SCOPE_TYPE_NAME, 'TXT', '_dmarc.example.com', null, null, 'managed by Postmaster');
 
         $apply = new ApplyLocalDmarc(new SystemConfigStorage());
         $plan = $apply->preview();
@@ -248,6 +252,34 @@ final class ApplyLocalDmarcTest extends TestCase
         HEAD;
         $body .= $dmarcLine;
         file_put_contents($this->bindDir . '/' . $zone . '.db', $body);
+    }
+
+    /**
+     * Drop a minimal v2 UserConfigStorage entry for alice with one
+     * connected zone, so ApplyLocalDmarc::cfZoneIdFor() can resolve
+     * (alice, $zoneName) → $zoneId during the lock-gate check.
+     */
+    private function seedAliceConfig(string $zoneName, string $zoneId): void
+    {
+        $dir = $this->userHome . '/.zonemirror';
+        @mkdir($dir, 0700, true);
+        $payload = [
+            'version' => 2,
+            'zones' => [[
+                'zone_id' => $zoneId,
+                'zone_name' => $zoneName,
+                'enabled' => true,
+                'defaults' => ['proxied' => false],
+                'source' => 'admin',
+                'sync_state' => 'awaiting_review',
+            ]],
+        ];
+        file_put_contents($dir . '/config.json', (string) json_encode($payload));
+        // KeyStore creation is also implicit when we go through
+        // UserConfigStorage::__construct; pre-create the file so the
+        // lookup in ApplyLocalDmarc constructs a working storage.
+        @file_put_contents($dir . '/master.key', random_bytes(32));
+        @chmod($dir . '/master.key', 0600);
     }
 
     private function rmrf(string $dir): void

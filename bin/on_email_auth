@@ -64,24 +64,11 @@ $log = new FileLogger(Paths::userLogFile($user), LogLevel::Info);
 
 try {
     $meta = UserConfigMetadataReader::read($user);
-    if (!$meta['enabled'] || $meta['zone_id'] === '') {
-        exit(0);
-    }
-    $hasCredentialPath = $meta['has_token']
-        || $meta['source'] === UserConfigStorage::SOURCE_ADMIN;
-    if (!$hasCredentialPath) {
-        exit(0);
-    }
     $systemStorage = new SystemConfigStorage();
     if (!$systemStorage->isUserAllowed($user)) {
         exit(0);
     }
     $systemDefaults = $systemStorage->load();
-    $defaults = [
-        'proxied'  => $meta['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
-        'ttl'      => $systemDefaults['defaults']['ttl'],
-        'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
-    ];
 
     $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
     $args = is_array($data['args'] ?? null) ? $data['args'] : [];
@@ -93,7 +80,8 @@ try {
     $queue = new SqliteQueue($user);
     $now = time();
     $upserted = 0;
-    $needsRecompute = false;
+    /** @var array<string, true> $zonesNeedingRecompute */
+    $zonesNeedingRecompute = [];
 
     foreach ($resultList as $row) {
         if (!is_array($row)) {
@@ -103,12 +91,23 @@ try {
         if ($domain === '') {
             continue;
         }
-        // Only sync events for the zone we mirror — a user with multiple
-        // addon domains may have invoked EmailAuth for one that ZoneMirror
-        // is not configured to touch.
-        if (strcasecmp(rtrim($domain, '.'), rtrim($meta['zone_name'], '.')) !== 0) {
+        // Match the affected domain against the user's connected zones.
+        // A user with N addon domains may have invoked EmailAuth for
+        // any of them; only synced zones get an event enqueued.
+        $zone = UserConfigMetadataReader::zoneForDomain($user, $domain);
+        if ($zone === null) {
             continue;
         }
+        $hasCredentialPath = $meta['has_token']
+            || $zone['source'] === UserConfigStorage::SOURCE_ADMIN;
+        if (!$hasCredentialPath) {
+            continue;
+        }
+        $defaults = [
+            'proxied'  => $zone['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
+            'ttl'      => $systemDefaults['defaults']['ttl'],
+            'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
+        ];
         if ((int) ($row['status'] ?? 0) !== 1) {
             continue;
         }
@@ -118,12 +117,12 @@ try {
             // Unparseable msg ("[no changes needed]", or a DKIM enable
             // whose content we can't see in the payload) — let the
             // daemon recompute the diff to pick up whatever changed.
-            $needsRecompute = true;
+            $zonesNeedingRecompute[$zone['zone_id']] = true;
 
             continue;
         }
         if ($parsed['action'] === 'DELETE') {
-            $needsRecompute = true;
+            $zonesNeedingRecompute[$zone['zone_id']] = true;
 
             continue;
         }
@@ -139,7 +138,7 @@ try {
         ];
         $dns = $mapper->map($normalised, $defaults);
         if ($dns === null) {
-            $needsRecompute = true;
+            $zonesNeedingRecompute[$zone['zone_id']] = true;
 
             continue;
         }
@@ -149,34 +148,37 @@ try {
             record: $dns,
             idempotencyKey: HookPayloadParser::idempotencyKey('upsert', $domain, $normalised),
             createdAt: $now,
+            zoneId: $zone['zone_id'],
         ));
         $upserted++;
     }
 
-    if ($needsRecompute) {
+    if ($zonesNeedingRecompute !== []) {
         $storage = new UserConfigStorage(
             new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
         );
         $cfg = $storage->load($user);
-        if ($cfg['enabled']) {
-            $storage->save($user, [
-                'enabled'    => $cfg['enabled'],
-                'zone_id'    => $cfg['zone_id'],
-                'zone_name'  => $cfg['zone_name'],
-                'defaults'   => $cfg['defaults'],
-                'source'     => $cfg['source'],
-                'token'     => $cfg['token'],
-                'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
-            ]);
+        $dirty = false;
+        foreach (array_keys($zonesNeedingRecompute) as $zoneId) {
+            $entry = UserConfigStorage::findZone($cfg, $zoneId);
+            if ($entry === null || !$entry['enabled']) {
+                continue;
+            }
+            $entry['sync_state'] = UserConfigStorage::STATE_PENDING_DIFF;
+            $cfg = UserConfigStorage::upsertZone($cfg, $entry);
+            $dirty = true;
+        }
+        if ($dirty) {
+            $storage->save($user, $cfg);
         }
     }
 
-    if ($upserted > 0 || $needsRecompute) {
+    if ($upserted > 0 || $zonesNeedingRecompute !== []) {
         $log->info('emailauth hook fanned out', [
             'func'      => $func,
             'user'      => $user,
             'upserted'  => $upserted,
-            'recompute' => $needsRecompute,
+            'recompute' => count($zonesNeedingRecompute),
         ]);
     }
 } catch (Throwable $e) {

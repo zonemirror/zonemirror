@@ -401,7 +401,15 @@ final class ApplyLocalDmarc
      */
     private function isLocked(string $owner, string $zone, array $rec): bool
     {
-        $locks = $this->lockStorage->all($owner);
+        // Locks are stored per (cPanel user, CF zone). Resolve the CF
+        // zone_id for $zone from the user's config; if the user has no
+        // connection for that zone (admin-only sync via WHM-side token,
+        // for instance) there's no per-zone lock file to consult.
+        $zoneId = $this->cfZoneIdFor($owner, $zone);
+        if ($zoneId === '') {
+            return false;
+        }
+        $locks = $this->lockStorage->all($owner, $zoneId);
         if ($locks === []) {
             return false;
         }
@@ -418,6 +426,36 @@ final class ApplyLocalDmarc
         ];
 
         return LockStorage::entryMatchesAny($locks, $entry);
+    }
+
+    /**
+     * Resolve the Cloudflare zone id for $zone in $user's multi-zone
+     * config. The local DMARC rewrite is keyed by the BIND zone name
+     * (= the cPanel domain), but locks live per CF zone — so we have
+     * to bridge between the two namespaces. Returns '' when the user
+     * has no connection for this zone, which the caller treats as
+     * "no zone-specific locks apply".
+     */
+    private function cfZoneIdFor(string $user, string $zone): string
+    {
+        // Lazy-load through a fresh ConfigCrypto+KeyStore each time we
+        // need to read a user's config. The plan() loop iterates many
+        // zones across many users so a static cache here would be
+        // worthwhile, but the current callers (CLI preview/apply,
+        // hooks) run as one-shot processes — premature optimisation.
+        try {
+            $storage = new \ZoneMirror\Infrastructure\Storage\UserConfigStorage(
+                new \ZoneMirror\Infrastructure\Storage\ConfigCrypto(
+                    new \ZoneMirror\Infrastructure\Storage\KeyStore(Paths::userKeyFile($user))
+                )
+            );
+            $cfg = $storage->load($user);
+        } catch (\Throwable) {
+            return '';
+        }
+        $hit = \ZoneMirror\Infrastructure\Storage\UserConfigStorage::findZoneByName($cfg, $zone);
+
+        return $hit === null ? '' : $hit['zone_id'];
     }
 
     private function hasCustomRua(string $content): bool

@@ -86,6 +86,57 @@ final class SqliteQueueTest extends TestCase
         self::assertNull($second, 'second claim must not see the still-leased event');
     }
 
+    public function testEnqueuedZoneIdRoundTrips(): void
+    {
+        $queue = new SqliteQueue('alice');
+        $record = new DnsRecord(RecordType::A, 'www.example.com', '203.0.113.1', 300, null, false, []);
+        $queue->enqueue(new DnsEvent(
+            'example.com',
+            EventAction::Upsert,
+            $record,
+            'rt-zone-1',
+            time(),
+            null,
+            'zone-abc',
+        ));
+        $claim = $queue->claim();
+        self::assertNotNull($claim);
+        self::assertSame('zone-abc', $claim['zone_id']);
+    }
+
+    public function testDepthAndDeadLetterCountFilterByZoneId(): void
+    {
+        $queue = new SqliteQueue('alice');
+        $record = new DnsRecord(RecordType::A, 'www.example.com', '203.0.113.1', 300, null, false, []);
+        $queue->enqueue(new DnsEvent('example.com', EventAction::Upsert, $record, 'k1', time(), null, 'zone-A'));
+        $queue->enqueue(new DnsEvent('example.com', EventAction::Upsert, $record, 'k2', time(), null, 'zone-A'));
+        $queue->enqueue(new DnsEvent('example.com', EventAction::Upsert, $record, 'k3', time(), null, 'zone-B'));
+
+        self::assertSame(3, $queue->depth());
+        self::assertSame(2, $queue->depth('zone-A'));
+        self::assertSame(1, $queue->depth('zone-B'));
+        self::assertSame(0, $queue->depth('zone-MISSING'));
+    }
+
+    public function testBackfillEmptyZoneIdUpdatesLegacyRowsOnly(): void
+    {
+        $queue = new SqliteQueue('alice');
+        $record = new DnsRecord(RecordType::A, 'www.example.com', '203.0.113.1', 300, null, false, []);
+        // Two legacy rows (no zone_id) + one already-tagged row.
+        $queue->enqueue(new DnsEvent('example.com', EventAction::Upsert, $record, 'bk-1', time()));
+        $queue->enqueue(new DnsEvent('example.com', EventAction::Upsert, $record, 'bk-2', time()));
+        $queue->enqueue(new DnsEvent('example.com', EventAction::Upsert, $record, 'bk-3', time(), null, 'zone-existing'));
+
+        $touched = $queue->backfillEmptyZoneId('zone-X');
+        self::assertSame(2, $touched);
+
+        // Re-running is a no-op because nothing has zone_id = '' anymore.
+        self::assertSame(0, $queue->backfillEmptyZoneId('zone-X'));
+
+        self::assertSame(2, $queue->depth('zone-X'));
+        self::assertSame(1, $queue->depth('zone-existing'));
+    }
+
     private function makeEvent(string $key): DnsEvent
     {
         $record = new DnsRecord(RecordType::A, 'www.example.com', '203.0.113.1', 300, null, false, []);

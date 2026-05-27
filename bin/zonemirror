@@ -196,6 +196,24 @@ cmd_local_dmarc() {
   /usr/local/cpanel/3rdparty/bin/php "$worker" "$@"
 }
 
+# `migrate-v2` rewrites every user's on-disk state from the pre-v2
+# single-zone shape into the multi-zone shape:
+#   - ~user/.zonemirror/config.json gains a `zones[]` array.
+#   - diff.json moves into users/<user>/zones/<zone_id>/diff.json.
+#   - ~user/.zonemirror/locks.json moves into zones/<zone_id>/locks.json.
+#   - The events table in queue.sqlite gets a zone_id column (added
+#     idempotently) and existing rows are back-filled with the user's
+#     single zone id.
+# Idempotent: re-running it after a v2 install is a no-op.
+cmd_migrate_v2() {
+  require_root
+  local worker="$PREFIX/bin/migrate-v2.php"
+  if [[ ! -f "$worker" ]]; then
+    die "migrate-v2 worker missing at $worker (reinstall the plugin)"
+  fi
+  /usr/local/cpanel/3rdparty/bin/php "$worker" "$@"
+}
+
 main() {
   local sub="${1:-help}"
   shift || true
@@ -207,6 +225,7 @@ main() {
     auto-update)  cmd_auto_update "$@" ;;
     logs)         cmd_logs "$@" ;;
     local-dmarc)  cmd_local_dmarc "$@" ;;
+    migrate-v2)   cmd_migrate_v2 "$@" ;;
     help|-h|--help) cmd_help ;;
     *)            die "unknown subcommand: $sub (try: zonemirror help)" ;;
   esac
