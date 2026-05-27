@@ -267,7 +267,23 @@ main() {
   register_plugin
   register_whm_appconfig
   regenerate_sprites
+  migrate_user_state
   print_summary
+}
+
+# Promote each enrolled user's state from the pre-v2 single-zone
+# layout to the multi-zone layout. Idempotent: on a fresh install
+# enrolled-users is empty and the migrator is a no-op; on an upgrade
+# from v1 it walks the file and rewrites configs / moves diff+locks
+# / back-fills queue rows in place.
+migrate_user_state() {
+  local worker="$PREFIX/bin/migrate-v2.php"
+  if [[ ! -f "$worker" ]]; then
+    return 0
+  fi
+  echo "==> Migrating user state to v2"
+  /usr/local/cpanel/3rdparty/bin/php "$worker" || \
+    echo "WARNING: migrate-v2 reported errors; check /var/cpanel/zonemirror/logs/zonemirror.log" >&2
 }
 
 main "$@"

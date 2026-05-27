@@ -27,6 +27,14 @@ final class DnsEvent
         public readonly string $idempotencyKey,
         public readonly int $createdAt,
         public readonly ?string $targetCloudflareId = null,
+        /**
+         * Cloudflare zone id this event targets. Defaults to '' so v1
+         * call sites that haven't been updated yet still compile; the
+         * queue's enqueue path tolerates an empty value (rows get
+         * back-filled from the user's only zone when the daemon
+         * processes them — see WorkerLoop).
+         */
+        public readonly string $zoneId = '',
     ) {
     }
 }

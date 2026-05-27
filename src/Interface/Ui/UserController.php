@@ -23,46 +23,73 @@ use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
 use ZoneMirror\Infrastructure\Storage\ZoneIndex;
 
 /**
- * Glue between the cPanel UI template and the storage/service layer. Owns
- * input validation, CSRF, and the user-scoped allowlist gate. The template
- * itself stays a thin view: it calls handle() and consumes the returned
- * view-model.
+ * Per-cPanel-user UI controller. The page is multi-zone: a single
+ * cPanel account can hold N independent Cloudflare connections (one
+ * per addon/parked domain they want to sync). The ViewModel returned
+ * from {@see handle()} carries one entry per connected zone — each
+ * with its own state, diff, locks and queue depth — plus the list of
+ * the user's cPanel domains so the template can offer "Connect" or
+ * "Re-enable" buttons for the ones not yet in zones[].
  *
- * The new (v0.2) entry point is the per-domain list: the template passes
- * every domain that belongs to the calling cPanel user, and the view-model
- * carries, for each one, whether it is already connected, available for
- * 1-click connect (admin token covers it), or not in any indexed zone.
+ * State transitions (per zone, not per user):
+ *
+ *   Available domain → Connect → zone added to zones[], enabled: true,
+ *      sync_state: pending_diff. Daemon computes the diff on its next
+ *      tick and flips to awaiting_review.
+ *
+ *   Connected zone → Disconnect → zone stays in zones[] with
+ *      enabled: false (soft delete). Locks and diff history are
+ *      preserved. If no other zone is enabled, the user is
+ *      unenrolled — the daemon stops iterating them altogether.
+ *
+ *   Disabled zone → Re-enable → enabled: true again, sync_state flips
+ *      to pending_diff to refresh against the current zone file.
+ *
+ * Every action that mutates one specific zone (refresh, apply,
+ * toggle_lock, add_lock, remove_lock, disconnect) requires a
+ * `zone_id` field in the POST so the template's per-card forms target
+ * exactly the zone the user clicked on. Missing or unknown zone_id
+ * returns an error to the caller — there is no implicit "current"
+ * zone in the multi-zone world.
  *
  * @phpstan-type DomainStatus array{
  *     name: string,
  *     status: string,
  *     zone_id: string,
- *     admin_token_id: string,
- *     is_current: bool
+ *     source: string
  * }
- *
+ * @phpstan-type DiffSummary array{
+ *     identical: int,
+ *     different: int,
+ *     cpanel_only: int,
+ *     cloudflare_only: int
+ * }
+ * @phpstan-type ZoneVm array{
+ *     zone_id: string,
+ *     zone_name: string,
+ *     enabled: bool,
+ *     sync_state: string,
+ *     last_error: string,
+ *     source: string,
+ *     defaults_proxied: bool,
+ *     queue_depth: int,
+ *     dead_letters: int,
+ *     diff: array<string, mixed>|null,
+ *     locks: array<string, array{scope: string, type: string, name: string, content: ?string, priority: ?int, reason: string, created_at: int}>,
+ *     locks_count: int,
+ *     diff_summary: DiffSummary|null
+ * }
  * @phpstan-type ViewModel array{
  *     user: string,
  *     allowed: bool,
  *     saved: bool,
  *     errors: list<string>,
  *     message: string,
- *     enabled: bool,
- *     zone_id: string,
- *     zone_name: string,
- *     source: string,
- *     sync_state: string,
- *     last_error: string,
- *     defaults_proxied: bool,
  *     token_set: bool,
  *     csrf: string,
- *     queue_depth: int,
- *     dead_letters: int,
  *     test_result: ?string,
- *     domains: list<DomainStatus>,
- *     diff: array<string, mixed>|null,
- *     locks: array<string, array{scope: string, type: string, name: string, content: ?string, priority: ?int, reason: string, created_at: int}>,
- *     locks_count: int
+ *     zones: list<ZoneVm>,
+ *     domains: list<DomainStatus>
  * }
  */
 final class UserController
@@ -71,6 +98,7 @@ final class UserController
     public const DOMAIN_AVAILABLE = 'available';
     public const DOMAIN_CONNECTED_ADMIN = 'connected-admin';
     public const DOMAIN_CONNECTED_USER = 'connected-user';
+    public const DOMAIN_DISABLED = 'disabled';
     public const DOMAIN_NOT_IN_ZONE = 'not-in-zone';
 
     private ?UserConfigStorage $storage;
@@ -81,31 +109,20 @@ final class UserController
 
     /**
      * Privileged writer for /var/cpanel/zonemirror/enrolled-users.
-     *
-     * In cPanel-user context the central enrolled-users file is root-
-     * owned (the daemon mmaps it on every tick) and a non-root LSPHP
-     * process cannot touch it — so the entry point at
-     * resources/cpanel/index.live.php injects a closure here that
-     * shells the write out through `$cpanel->uapi('ZoneMirror',
-     * 'enroll'/'unenroll')`, which talks to the matching adminbin
-     * binary at /usr/local/cpanel/bin/admin/Cpanel/ZoneMirror.
-     *
-     * When the controller is constructed in a root context (the daemon
-     * or unit tests that don't simulate LSPHP), this stays null and
-     * EnrolledUsers writes the file directly — no UAPI round-trip.
+     * See AdminBin notes in resources/cpanel/index.live.php.
      *
      * @var (callable(string): void)|null
      */
     private $enrollmentBackend = null;
 
     /**
-     * Side-channel from the last applySelected() call so the JSON response
-     * for an AJAX Apply can echo back the exact card keys that were
-     * enqueued (and which ones were skipped). The front-end uses this list
-     * to mark precisely those cards as "applying" without having to guess
-     * from form state.
+     * Side-channel from the last applySelected() call so the JSON
+     * response for an AJAX Apply can echo back the exact card keys
+     * that were enqueued (and which ones were skipped). The front-end
+     * uses this list to mark precisely those cards as "applying"
+     * without having to guess from form state.
      *
-     * @var array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, blocked_by_lock: list<string>, batch_ts: int}|null
+     * @var array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, blocked_by_lock: list<string>, batch_ts: int, zone_id: string}|null
      */
     private ?array $lastApplyMeta = null;
 
@@ -127,9 +144,10 @@ final class UserController
     }
 
     /**
-     * Mark $user as opted-in. Routes through the privileged adminbin
-     * when the controller is running in cPanel-user context; otherwise
-     * writes the file directly via EnrolledUsers.
+     * Mark $user as opted-in. Idempotent; safe to call when the user
+     * is already enrolled. Routes through the privileged adminbin
+     * when the controller is running in cPanel-user context;
+     * otherwise writes the file directly via EnrolledUsers.
      */
     private function markEnrolled(string $user): void
     {
@@ -195,9 +213,11 @@ final class UserController
                 if ($action === 'connect_domain') {
                     [$saved, $errors, $message] = $this->connectDomain($user, $post, $allDomains);
                 } elseif ($action === 'disconnect') {
-                    [$saved, $errors, $message] = $this->disconnect($user);
+                    [$saved, $errors, $message] = $this->disconnect($user, $post);
+                } elseif ($action === 'reenable') {
+                    [$saved, $errors, $message] = $this->reenable($user, $post);
                 } elseif ($action === 'refresh_diff') {
-                    [$saved, $errors, $message] = $this->refreshDiff($user);
+                    [$saved, $errors, $message] = $this->refreshDiff($user, $post);
                 } elseif ($action === 'apply') {
                     [$saved, $errors, $message] = $this->applySelected($user, $post);
                 } elseif ($action === 'toggle_lock') {
@@ -218,29 +238,51 @@ final class UserController
         }
 
         $cfg = $this->storageFor($user)->load($user);
+        $zones = [];
+        foreach ($cfg['zones'] as $zone) {
+            $zones[] = $this->buildZoneVm($user, $zone);
+        }
+
+        return [
+            'user' => $user,
+            'allowed' => $allowed,
+            'saved' => $saved,
+            'errors' => $errors,
+            'message' => $message,
+            'token_set' => $cfg['token'] !== '',
+            'csrf' => Csrf::token(),
+            'test_result' => $testResult,
+            'zones' => $zones,
+            'domains' => $this->buildDomainsStatus($allDomains, $cfg),
+        ];
+    }
+
+    /**
+     * Per-zone view model. Reads the diff and locks for the zone and
+     * annotates each diff entry with whether any lock matches it (the
+     * same enrichment the v1 single-zone code did, just scoped to one
+     * zone now).
+     *
+     * @param array{zone_id: string, zone_name: string, enabled: bool, defaults: array{proxied: bool}, source: string, sync_state: string, last_error: string} $zone
+     * @return ZoneVm
+     */
+    private function buildZoneVm(string $user, array $zone): array
+    {
         $depth = 0;
         $dead = 0;
-        if ($cfg['enabled']) {
+        if ($zone['enabled']) {
             try {
                 $queue = new SqliteQueue($user);
-                $depth = $queue->depth();
-                $dead = $queue->deadLetterCount();
+                $depth = $queue->depth($zone['zone_id']);
+                $dead = $queue->deadLetterCount($zone['zone_id']);
             } catch (\Throwable) {
-                // Queue not yet initialized; show zeros.
+                // Queue not initialised yet (no enqueues this lifetime).
             }
         }
 
-        $diff = $cfg['enabled'] ? (new DiffStorage())->load($user) : null;
-        $locks = $cfg['enabled'] ? (new LockStorage())->all($user) : [];
+        $diff = $zone['enabled'] ? (new DiffStorage())->load($user, $zone['zone_id']) : null;
+        $locks = $zone['enabled'] ? (new LockStorage())->all($user, $zone['zone_id']) : [];
 
-        // Annotate each diff entry with whether ANY lock matches it. A
-        // single record can be covered by several locks at once (e.g. a
-        // zone-wide lock AND a per-record exact lock) — we list every
-        // matching lock id on the entry so the UI can show "this is
-        // locked because of the zone lock" instead of a blanket padlock
-        // the user can't trace back. The type_name lock id keeps living
-        // on the entry too so the card's quick-toggle padlock still
-        // round-trips with the same id whether locked or not.
         if (is_array($diff) && isset($diff['entries']) && is_array($diff['entries'])) {
             foreach ($diff['entries'] as $i => $entry) {
                 if (!is_array($entry)) {
@@ -264,46 +306,55 @@ final class UserController
             }
         }
 
+        $summary = null;
+        if (is_array($diff) && isset($diff['summary']) && is_array($diff['summary'])) {
+            $s = $diff['summary'];
+            $summary = [
+                'identical' => (int) ($s['identical'] ?? 0),
+                'different' => (int) ($s['different'] ?? 0),
+                'cpanel_only' => (int) ($s['cpanel_only'] ?? 0),
+                'cloudflare_only' => (int) ($s['cloudflare_only'] ?? 0),
+            ];
+        }
+
         return [
-            'user' => $user,
-            'allowed' => $allowed,
-            'saved' => $saved,
-            'errors' => $errors,
-            'message' => $message,
-            'enabled' => $cfg['enabled'],
-            'zone_id' => $cfg['zone_id'],
-            'zone_name' => $cfg['zone_name'],
-            'source' => $cfg['source'],
-            'sync_state' => $cfg['sync_state'],
-            'last_error' => $cfg['last_error'],
-            'defaults_proxied' => $cfg['defaults']['proxied'],
-            'token_set' => $cfg['token'] !== '',
-            'csrf' => Csrf::token(),
+            'zone_id' => $zone['zone_id'],
+            'zone_name' => $zone['zone_name'],
+            'enabled' => $zone['enabled'],
+            'sync_state' => $zone['sync_state'],
+            'last_error' => $zone['last_error'],
+            'source' => $zone['source'],
+            'defaults_proxied' => $zone['defaults']['proxied'],
             'queue_depth' => $depth,
             'dead_letters' => $dead,
-            'test_result' => $testResult,
-            'domains' => $this->buildDomainsStatus($allDomains, $cfg),
             'diff' => $diff,
             'locks' => $locks,
             'locks_count' => count($locks),
+            'diff_summary' => $summary,
         ];
     }
 
     /**
-     * @param list<string>                                                                                     $allDomains
-     * @param array{enabled: bool, zone_id: string, zone_name: string, source: string, token: string, ...}     $cfg
+     * Walk the user's cPanel domains and mark each one's connection
+     * status. A domain can be in one of:
+     *   - connected-admin: enabled zone in cfg, source=admin
+     *   - connected-user:  enabled zone in cfg, source=user
+     *   - disabled:        zone in cfg with enabled=false
+     *   - available:       not in cfg, but covered by an admin token
+     *   - not-in-zone:     not in cfg and not covered anywhere
+     *
+     * @param list<string> $allDomains
+     * @param array{token: string, zones: list<array{zone_id: string, zone_name: string, enabled: bool, defaults: array{proxied: bool}, source: string, sync_state: string, last_error: string}>} $cfg
      * @return list<DomainStatus>
      */
     private function buildDomainsStatus(array $allDomains, array $cfg): array
     {
-        $out = [];
-        $currentZone = strtolower($cfg['zone_name']);
-        $currentSource = $cfg['source'];
-        $currentEnabled = $cfg['enabled'];
         $index = $this->zoneIndex();
+        $byDomain = [];
+        foreach ($cfg['zones'] as $z) {
+            $byDomain[strtolower($z['zone_name'])] = $z;
+        }
 
-        // Dedupe + lowercase. cPanel sometimes returns trailing dots or
-        // mixed case in sub_domains; normalise once here.
         $seen = [];
         $clean = [];
         foreach ($allDomains as $d) {
@@ -315,29 +366,35 @@ final class UserController
             $clean[] = $name;
         }
 
-        foreach ($clean as $domain) {
-            $isCurrent = $currentEnabled && $domain === $currentZone;
-            $isCurrentAdmin = $isCurrent && $currentSource === UserConfigStorage::SOURCE_ADMIN;
-            $isCurrentUser = $isCurrent && $currentSource === UserConfigStorage::SOURCE_USER;
+        $out = [];
+        foreach ($clean as $name) {
+            $entry = $byDomain[$name] ?? null;
+            if ($entry !== null) {
+                if ($entry['enabled']) {
+                    $status = $entry['source'] === UserConfigStorage::SOURCE_USER
+                        ? self::DOMAIN_CONNECTED_USER
+                        : self::DOMAIN_CONNECTED_ADMIN;
+                } else {
+                    $status = self::DOMAIN_DISABLED;
+                }
+                $out[] = [
+                    'name' => $name,
+                    'status' => $status,
+                    'zone_id' => $entry['zone_id'],
+                    'source' => $entry['source'],
+                ];
 
-            $hit = $index->findByDomain($domain);
-
-            if ($isCurrentAdmin) {
-                $status = self::DOMAIN_CONNECTED_ADMIN;
-            } elseif ($isCurrentUser) {
-                $status = self::DOMAIN_CONNECTED_USER;
-            } elseif ($hit !== null) {
-                $status = self::DOMAIN_AVAILABLE;
-            } else {
-                $status = self::DOMAIN_NOT_IN_ZONE;
+                continue;
             }
-
+            // Not in user's config yet — check whether an admin token
+            // covers it (Connect button is offered) or not (no path
+            // forward without the user pasting their own token).
+            $hit = $index->findByDomain($name);
             $out[] = [
-                'name' => $domain,
-                'status' => $status,
-                'zone_id' => $hit['cf_zone_id'] ?? '',
-                'admin_token_id' => $hit['admin_token_id'] ?? '',
-                'is_current' => $isCurrent,
+                'name' => $name,
+                'status' => $hit === null ? self::DOMAIN_NOT_IN_ZONE : self::DOMAIN_AVAILABLE,
+                'zone_id' => $hit === null ? '' : $hit['cf_zone_id'],
+                'source' => UserConfigStorage::SOURCE_ADMIN,
             ];
         }
 
@@ -345,10 +402,11 @@ final class UserController
     }
 
     /**
-     * The mainstream 1-click path: the user picks one of their cPanel
-     * domains, we look it up in the zone index, and persist a
-     * source=admin connection with the matching zone id. No token paste,
-     * no DNS knowledge required from the user.
+     * Append a new zone to the user's config (or re-enable an existing
+     * disabled one for the same domain). Enrolls the user before
+     * writing the config so a failed enroll never leaves a half-state
+     * — UserConfig save is the last step, so a failed write doesn't
+     * leak a half-deserialised file either.
      *
      * @param array<string, mixed> $post
      * @param list<string>         $allDomains
@@ -362,8 +420,8 @@ final class UserController
         }
 
         // The domain MUST belong to this cPanel user — otherwise a
-        // crafted POST could connect any zone covered by an admin token
-        // under any user's identity.
+        // crafted POST could connect any zone covered by an admin
+        // token under any user's identity.
         $ownedLowercase = array_map(
             static fn (string $d): string => strtolower(trim($d, " \t\n\r\0\x0B.")),
             $allDomains
@@ -378,21 +436,42 @@ final class UserController
         }
 
         $storage = $this->storageFor($user);
-        $existing = $storage->load($user);
-        // sync_state=pending_diff signals the daemon to compute the diff
-        // between /var/named/<zone>.db and Cloudflare on its next cycle.
-        // The UI then shows the per-record review table; nothing is pushed
-        // to Cloudflare until the user explicitly applies rows.
-        $storage->save($user, [
-            'enabled' => true,
+        $cfg = $storage->load($user);
+
+        // Enroll first — if it fails (adminbin error, permission
+        // denied) we throw before save() and the config stays exactly
+        // as it was. This is the lesson from the pre-AdminBin half-
+        // state bug where save ran but enroll didn't.
+        try {
+            $this->markEnrolled($user);
+        } catch (\Throwable $e) {
+            return [false, ['Could not enable plugin for your account: ' . $e->getMessage()], ''];
+        }
+
+        $newZone = [
             'zone_id' => $hit['cf_zone_id'],
             'zone_name' => $domain,
-            'defaults' => $existing['defaults'],
+            'enabled' => true,
+            'defaults' => ['proxied' => false],
             'source' => UserConfigStorage::SOURCE_ADMIN,
+            // pending_diff signals the daemon to compute the diff on
+            // its next tick; the UI then shows the per-record review.
             'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
-        ]);
+            'last_error' => '',
+        ];
 
-        $this->markEnrolled($user);
+        // Re-enable path: same domain already exists but was soft-
+        // deleted. Preserve any old defaults so the user gets back to
+        // exactly where they were.
+        $existing = UserConfigStorage::findZoneByName($cfg, $domain);
+        if ($existing !== null) {
+            $newZone['defaults'] = $existing['defaults'];
+            $newZone['source'] = $existing['source'];
+        }
+
+        $cfg = UserConfigStorage::upsertZone($cfg, $newZone);
+        $storage->save($user, $cfg);
+
         $this->logFor($user)->info('domain connected via admin token', [
             'user' => $user,
             'domain' => $domain,
@@ -404,61 +483,58 @@ final class UserController
     }
 
     /**
-     * Re-flag the user as pending_diff so the daemon recomputes on its
-     * next cycle. The previous diff.json stays on disk until the daemon
-     * overwrites it so the UI keeps something to render in the meantime;
-     * we just flip the sync_state.
+     * Re-flag a specific zone as pending_diff so the daemon recomputes
+     * on its next cycle. The previous diff.json stays on disk until
+     * the daemon overwrites it so the UI keeps something to render in
+     * the meantime; we just flip the sync_state.
      *
+     * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
      */
-    private function refreshDiff(string $user): array
+    private function refreshDiff(string $user, array $post): array
     {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
         $storage = $this->storageFor($user);
         $cfg = $storage->load($user);
-        if (!$cfg['enabled'] || $cfg['zone_id'] === '') {
-            return [false, ['No domain connected.'], ''];
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null || !$zone['enabled']) {
+            return [false, ['Zone not connected.'], ''];
         }
-        $storage->save($user, [
-            'enabled' => $cfg['enabled'],
-            'zone_id' => $cfg['zone_id'],
-            'zone_name' => $cfg['zone_name'],
-            'defaults' => $cfg['defaults'],
-            'source' => $cfg['source'],
-            'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
-            'token' => $cfg['token'],
-        ]);
+        $zone['sync_state'] = UserConfigStorage::STATE_PENDING_DIFF;
+        $zone['last_error'] = '';
+        $cfg = UserConfigStorage::upsertZone($cfg, $zone);
+        $storage->save($user, $cfg);
 
         return [true, [], 'Refreshing diff with Cloudflare…'];
     }
 
     /**
-     * Apply user-selected diff rows. Two POST shapes are accepted:
-     *
-     * 1. Per-row selection — `push_keys[]` and `delete_keys[]` arrays of
-     *    diff entry keys. The user ticks individual rows in the table
-     *    and we enqueue one event per key.
-     * 2. Bulk by status — `apply_status` set to "different",
-     *    "cpanel_only", or "cloudflare_only" applies every row in that
-     *    category. "different" and "cpanel_only" produce Upserts;
-     *    "cloudflare_only" produces Deletes.
-     *
-     * The two shapes can be combined in one POST (e.g. apply_status =
-     * cpanel_only + a few extra push_keys); we de-duplicate by key. The
-     * sync_state stays in awaiting_review unless every non-identical
-     * row has been applied, in which case we flip it to idle.
+     * Apply user-selected diff rows. Same two POST shapes as the v1
+     * single-zone path, plus a required `zone_id` so we target the
+     * right diff file and the right lock table. Mixed-zone POSTs are
+     * not supported — the template's per-card forms emit a single
+     * zone_id and only the keys for that zone.
      *
      * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
      */
     private function applySelected(string $user, array $post): array
     {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
         $storage = $this->storageFor($user);
         $cfg = $storage->load($user);
-        if (!$cfg['enabled'] || $cfg['zone_id'] === '') {
-            return [false, ['No domain connected.'], ''];
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null || !$zone['enabled']) {
+            return [false, ['Zone not connected.'], ''];
         }
 
-        $diff = (new DiffStorage())->load($user);
+        $diff = (new DiffStorage())->load($user, $zoneId);
         if ($diff === null) {
             return [false, ['No diff available. Press Refresh to recompute.'], ''];
         }
@@ -473,11 +549,6 @@ final class UserController
         $pushKeys = $this->normaliseKeyList($post['push_keys'] ?? []);
         $deleteKeys = $this->normaliseKeyList($post['delete_keys'] ?? []);
 
-        // Per-record proxy override. The UI emits proxy_override[KEY]="1"|"0"
-        // when the user clicks the cloud toggle on a card. We force-include
-        // the key in pushKeys and, below, override the hydrated record's
-        // proxied flag before enqueueing. Empty values are ignored — that's
-        // the UI's signal for "user toggled twice, back to original".
         /** @var array<string, bool> $proxyOverrides */
         $proxyOverrides = [];
         if (isset($post['proxy_override']) && is_array($post['proxy_override'])) {
@@ -492,9 +563,6 @@ final class UserController
             }
         }
 
-        // Bulk by status: union with per-row picks. We treat cpanel_only
-        // and different as Upserts, cloudflare_only as Deletes — matching
-        // the per-row defaults in the UI.
         $bulkStatus = (string) ($post['apply_status'] ?? '');
         if ($bulkStatus !== '') {
             foreach ($byKey as $key => $e) {
@@ -516,13 +584,7 @@ final class UserController
         $pushKeys = array_values(array_unique($pushKeys));
         $deleteKeys = array_values(array_unique($deleteKeys));
 
-        // Locks gate: even if the user (or a bulk-select) ticked a row
-        // they've previously protected, drop it here so no Upsert/Delete
-        // ever escapes the controller. The match is against any lock in
-        // the table — zone-wide, subtree, name, type_name, or exact —
-        // so a single coarse lock can shield a whole branch of rows
-        // from a fat-fingered bulk apply.
-        $locks = (new LockStorage())->all($user);
+        $locks = (new LockStorage())->all($user, $zoneId);
         $blockedByLock = [];
         $filter = function (array $keys) use (&$blockedByLock, $byKey, $locks): array {
             $out = [];
@@ -560,10 +622,6 @@ final class UserController
 
                 continue;
             }
-            // Apply the per-record proxy override on top of the hydrated
-            // record. This is what lets the user "Promote to proxied" (or
-            // back) on a row that was previously identical, without us
-            // having to invent a new event type.
             if (array_key_exists($key, $proxyOverrides) && $record->type->supportsProxy()) {
                 $record = new DnsRecord(
                     type: $record->type,
@@ -575,13 +633,6 @@ final class UserController
                     data: $record->data,
                 );
             }
-            // When the diff entry identified a specific Cloudflare record
-            // id as the counterpart (status=different), pin the upsert to
-            // that id. Otherwise the daemon falls back to a (type, name)
-            // snapshot lookup which can hit the wrong row when multiple
-            // records share the same owner (e.g. duplicate TXT/SPF), and
-            // the diff would keep flapping forever as Apply only ever
-            // updated one of the duplicates.
             $remoteIdForUpsert = null;
             if (is_array($entry['remote'] ?? null)) {
                 $rid = (string) ($entry['remote']['id'] ?? '');
@@ -596,6 +647,7 @@ final class UserController
                 idempotencyKey: 'apply:' . $now . ':push:' . $key,
                 createdAt: $now,
                 targetCloudflareId: $remoteIdForUpsert,
+                zoneId: $zoneId,
             ));
             $pushed++;
         }
@@ -613,9 +665,6 @@ final class UserController
 
                 continue;
             }
-            // For deletes we only need enough of a DnsRecord for the
-            // logger; the actual lookup happens on the daemon side via
-            // target_cloudflare_id. Use a minimal placeholder.
             $type = RecordType::tryFromString((string) ($entry['type'] ?? ''));
             if ($type === null) {
                 $skipped[] = $key;
@@ -638,16 +687,14 @@ final class UserController
                 idempotencyKey: 'apply:' . $now . ':del:' . $key,
                 createdAt: $now,
                 targetCloudflareId: $remoteId,
+                zoneId: $zoneId,
             ));
             $deleted++;
         }
 
-        // We deliberately do NOT flip sync_state to idle here. The diff
-        // stays "awaiting_review" until the user explicitly refreshes;
-        // the queue depth + dead_letter count tell them how the apply is
-        // progressing, and Refresh shows what's left to do.
         $this->logFor($user)->info('diff: applied', [
             'user' => $user,
+            'zone' => $zone['zone_name'],
             'pushed' => $pushed,
             'deleted' => $deleted,
             'skipped' => count($skipped),
@@ -664,9 +711,6 @@ final class UserController
             return [false, ['Nothing selected.'], ''];
         }
 
-        // Record what we just enqueued for the AJAX response. We expose
-        // only the surviving (non-skipped) card keys so the front-end can
-        // mark exactly those cards as "applying".
         $enqueuedPush = array_values(array_filter(
             $pushKeys,
             static fn (string $k): bool => !in_array($k, $skipped, true)
@@ -681,6 +725,7 @@ final class UserController
             'skipped'     => $skipped,
             'blocked_by_lock' => array_values(array_unique($blockedByLock)),
             'batch_ts'    => $now,
+            'zone_id'     => $zoneId,
         ];
 
         $msg = 'Queued ' . implode(' and ', $bits) . '. Cloudflare will reflect changes within ~30s.';
@@ -693,19 +738,24 @@ final class UserController
     }
 
     /**
-     * Quick-toggle (used by the padlock button on each card): flips a
-     * SCOPE_TYPE_NAME lock for the row the user clicked on. The fine-
-     * grained scopes (zone / subtree / name / exact) go through the
-     * Manage Locks panel and addLock() below.
+     * Quick-toggle (padlock button on each card): flips a
+     * SCOPE_TYPE_NAME lock for the row the user clicked on, scoped to
+     * the zone the card belongs to. Fine-grained scopes go through
+     * the Manage Locks panel and addLock() below.
      *
      * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
      */
     private function toggleLock(string $user, array $post): array
     {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
         $cfg = $this->storageFor($user)->load($user);
-        if (!$cfg['enabled']) {
-            return [false, ['No domain connected.'], ''];
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null || !$zone['enabled']) {
+            return [false, ['Zone not connected.'], ''];
         }
 
         $key = trim((string) ($post['lock_key'] ?? ''));
@@ -713,7 +763,7 @@ final class UserController
             return [false, ['Missing record identifier.'], ''];
         }
 
-        $diff = (new DiffStorage())->load($user);
+        $diff = (new DiffStorage())->load($user, $zoneId);
         if ($diff === null) {
             return [false, ['No diff available.'], ''];
         }
@@ -732,12 +782,13 @@ final class UserController
         $storage = new LockStorage();
         $lockId  = LockStorage::lockIdForEntry($entry, LockStorage::SCOPE_TYPE_NAME);
 
-        if ($storage->isLockedById($user, $lockId)) {
-            $storage->remove($user, $lockId);
+        if ($storage->isLockedById($user, $zoneId, $lockId)) {
+            $storage->remove($user, $zoneId, $lockId);
             $msg = sprintf('Lock removed from %s %s.', (string) ($entry['type'] ?? ''), (string) ($entry['name'] ?? ''));
         } else {
             $storage->add(
                 user: $user,
+                zoneId: $zoneId,
                 scope: LockStorage::SCOPE_TYPE_NAME,
                 type: (string) ($entry['type'] ?? ''),
                 name: (string) ($entry['name'] ?? ''),
@@ -750,18 +801,21 @@ final class UserController
     }
 
     /**
-     * Add a lock with an explicit scope. Used by the "Manage Locks"
-     * panel where the user picks zone / subtree / name / type_name /
-     * exact from a dropdown and fills the criteria fields that apply.
+     * Add a lock with an explicit scope (Manage Locks panel).
      *
      * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
      */
     private function addLock(string $user, array $post): array
     {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
         $cfg = $this->storageFor($user)->load($user);
-        if (!$cfg['enabled']) {
-            return [false, ['No domain connected.'], ''];
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null || !$zone['enabled']) {
+            return [false, ['Zone not connected.'], ''];
         }
 
         $scope = trim((string) ($post['scope'] ?? ''));
@@ -775,9 +829,6 @@ final class UserController
         $priority = isset($post['priority']) && $post['priority'] !== '' ? (int) $post['priority'] : null;
         $reason   = trim((string) ($post['reason'] ?? ''));
 
-        // For SCOPE_ZONE the name is implicit (the connected zone);
-        // for SCOPE_SUBTREE / SCOPE_NAME the user may pass the apex by
-        // typing the zone name itself, which we accept verbatim.
         if ($scope === LockStorage::SCOPE_ZONE) {
             $type = '';
             $name = '';
@@ -788,6 +839,7 @@ final class UserController
         try {
             $id = (new LockStorage())->add(
                 user: $user,
+                zoneId: $zoneId,
                 scope: $scope,
                 type: $type,
                 name: $name,
@@ -803,23 +855,25 @@ final class UserController
     }
 
     /**
-     * Remove a lock by id. The Manage Locks panel emits this with the
-     * id pulled straight from the rendered list.
-     *
      * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
      */
     private function removeLock(string $user, array $post): array
     {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
         $cfg = $this->storageFor($user)->load($user);
-        if (!$cfg['enabled']) {
-            return [false, ['No domain connected.'], ''];
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null || !$zone['enabled']) {
+            return [false, ['Zone not connected.'], ''];
         }
         $lockId = trim((string) ($post['lock_id'] ?? ''));
         if ($lockId === '') {
             return [false, ['Missing lock id.'], ''];
         }
-        $ok = (new LockStorage())->remove($user, $lockId);
+        $ok = (new LockStorage())->remove($user, $zoneId, $lockId);
         if (!$ok) {
             return [false, ['Lock not found.'], ''];
         }
@@ -829,10 +883,9 @@ final class UserController
 
     /**
      * Metadata recorded by the last call to applySelected() in this
-     * request. Null when the current request was not an apply. Used by
-     * the JSON dispatch in the cPanel template.
+     * request. Null when the current request was not an apply.
      *
-     * @return array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, blocked_by_lock: list<string>, batch_ts: int}|null
+     * @return array{push_keys: list<string>, delete_keys: list<string>, skipped: list<string>, blocked_by_lock: list<string>, batch_ts: int, zone_id: string}|null
      */
     public function lastApplyMeta(): ?array
     {
@@ -840,42 +893,60 @@ final class UserController
     }
 
     /**
-     * Lightweight read-only snapshot of the user's queue state. Used by
-     * the JSON poll endpoint so the front-end can render a live progress
-     * bar without re-rendering the whole page.
+     * Lightweight read-only snapshot of every connected zone's queue
+     * state. Used by the JSON poll endpoint so the front-end can
+     * render a live progress bar per card without re-rendering the
+     * whole page.
      *
      * @return array{
-     *     enabled: bool,
-     *     sync_state: string,
-     *     queue_depth: int,
-     *     dead_letters: int,
-     *     pending_keys: list<string>,
+     *     zones: array<string, array{
+     *         sync_state: string,
+     *         queue_depth: int,
+     *         dead_letters: int,
+     *         pending_keys: list<string>
+     *     }>,
      *     ts: int
      * }
      */
     public function queueStatus(string $user): array
     {
         $cfg = $this->storageFor($user)->load($user);
-        $depth = 0;
-        $dead = 0;
-        $pending = [];
-        if ($cfg['enabled']) {
-            try {
-                $queue = new SqliteQueue($user);
-                $depth = $queue->depth();
-                $dead = $queue->deadLetterCount();
-                $pending = $queue->pendingKeys();
-            } catch (\Throwable) {
-                // queue file may not exist yet — zeros are fine.
+        $zones = [];
+        $queue = null;
+        try {
+            $queue = new SqliteQueue($user);
+        } catch (\Throwable) {
+            $queue = null;
+        }
+        foreach ($cfg['zones'] as $zone) {
+            if (!$zone['enabled']) {
+                continue;
             }
+            $depth = 0;
+            $dead = 0;
+            $pending = [];
+            if ($queue !== null) {
+                try {
+                    $depth = $queue->depth($zone['zone_id']);
+                    $dead = $queue->deadLetterCount($zone['zone_id']);
+                    // pendingKeys is a global pop-front list; the
+                    // front-end matches by key on its own cards so a
+                    // single list is fine for now.
+                    $pending = $queue->pendingKeys();
+                } catch (\Throwable) {
+                    // queue file may not exist yet — zeros are fine.
+                }
+            }
+            $zones[$zone['zone_id']] = [
+                'sync_state' => $zone['sync_state'],
+                'queue_depth' => $depth,
+                'dead_letters' => $dead,
+                'pending_keys' => $pending,
+            ];
         }
 
         return [
-            'enabled' => $cfg['enabled'],
-            'sync_state' => $cfg['sync_state'],
-            'queue_depth' => $depth,
-            'dead_letters' => $dead,
-            'pending_keys' => $pending,
+            'zones' => $zones,
             'ts' => time(),
         ];
     }
@@ -899,9 +970,7 @@ final class UserController
     }
 
     /**
-     * Rebuild a DnsRecord from the `local` block of a diff entry. The
-     * shape was produced by DnsRecord::toCloudflarePayload(), so this
-     * is essentially the inverse of that method.
+     * Inverse of DnsRecord::toCloudflarePayload().
      *
      * @param array<string, mixed> $payload
      */
@@ -924,40 +993,114 @@ final class UserController
     }
 
     /**
+     * Soft-delete a zone: flip enabled to false, keep the entry in
+     * zones[] so its locks history survives a re-enable. Drop the
+     * cached diff because it's now visually misleading. Unenroll the
+     * user only when no other zone is still enabled — otherwise the
+     * daemon must keep iterating them for the remaining zones.
+     *
+     * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>, 2: string}
      */
-    private function disconnect(string $user): array
+    private function disconnect(string $user, array $post): array
     {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
         $storage = $this->storageFor($user);
-        $existing = $storage->load($user);
-        $storage->save($user, [
-            'enabled' => false,
-            'zone_id' => $existing['zone_id'],
-            'zone_name' => $existing['zone_name'],
-            'defaults' => $existing['defaults'],
-            'source' => $existing['source'],
-            'sync_state' => UserConfigStorage::STATE_IDLE,
-            // Keep the user's own token on file if they had one, so they
-            // can re-enable without re-pasting. For source=admin there
-            // is nothing token-ish to keep.
-            'token' => $existing['source'] === UserConfigStorage::SOURCE_USER ? $existing['token'] : '',
+        $cfg = $storage->load($user);
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null) {
+            return [false, ['Zone not connected.'], ''];
+        }
+        if (!$zone['enabled']) {
+            return [true, [], sprintf('%s was already disconnected.', $zone['zone_name'])];
+        }
+
+        $zone['enabled'] = false;
+        $zone['sync_state'] = UserConfigStorage::STATE_IDLE;
+        $zone['last_error'] = '';
+        $cfg = UserConfigStorage::upsertZone($cfg, $zone);
+        $storage->save($user, $cfg);
+
+        (new DiffStorage())->remove($user, $zoneId);
+
+        $stillActive = false;
+        foreach ($cfg['zones'] as $z) {
+            if ($z['enabled']) {
+                $stillActive = true;
+
+                break;
+            }
+        }
+        if (!$stillActive) {
+            try {
+                $this->markUnenrolled($user);
+            } catch (\Throwable $e) {
+                $this->logFor($user)->warning('unenroll failed after last zone disconnect', [
+                    'user' => $user,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $this->logFor($user)->info('disconnected', [
+            'user' => $user,
+            'zone' => $zone['zone_name'],
+            'still_active_zones' => $stillActive,
         ]);
 
-        // The diff is now stale and visually misleading — drop it. A
-        // reconnect will trigger pending_diff which recomputes from
-        // scratch.
-        (new DiffStorage())->remove($user);
-
-        $this->markUnenrolled($user);
-        $this->logFor($user)->info('disconnected', ['user' => $user]);
-
-        return [true, [], 'Disconnected. No more changes will be pushed to Cloudflare.'];
+        return [true, [], sprintf('%s disconnected.', $zone['zone_name'])];
     }
 
     /**
-     * Legacy "case 2" path: the user pastes their own Cloudflare token.
-     * Kept for advanced users whose domains are not covered by any admin
-     * token; the cPanel UI hides this behind an "Advanced" disclosure.
+     * Re-enable a soft-deleted zone. Flip enabled to true and reset
+     * sync_state to pending_diff so the daemon recomputes the diff
+     * against whatever the zone file looks like now (it may have
+     * drifted while the zone was disabled).
+     *
+     * @param array<string, mixed> $post
+     * @return array{0: bool, 1: list<string>, 2: string}
+     */
+    private function reenable(string $user, array $post): array
+    {
+        $zoneId = (string) ($post['zone_id'] ?? '');
+        if ($zoneId === '') {
+            return [false, ['Missing zone id.'], ''];
+        }
+        $storage = $this->storageFor($user);
+        $cfg = $storage->load($user);
+        $zone = UserConfigStorage::findZone($cfg, $zoneId);
+        if ($zone === null) {
+            return [false, ['Zone not connected.'], ''];
+        }
+
+        try {
+            $this->markEnrolled($user);
+        } catch (\Throwable $e) {
+            return [false, ['Could not enable plugin for your account: ' . $e->getMessage()], ''];
+        }
+
+        $zone['enabled'] = true;
+        $zone['sync_state'] = UserConfigStorage::STATE_PENDING_DIFF;
+        $zone['last_error'] = '';
+        $cfg = UserConfigStorage::upsertZone($cfg, $zone);
+        $storage->save($user, $cfg);
+
+        $this->logFor($user)->info('zone re-enabled', [
+            'user' => $user,
+            'zone' => $zone['zone_name'],
+        ]);
+
+        return [true, [], sprintf('%s re-enabled. Computing diff with Cloudflare…', $zone['zone_name'])];
+    }
+
+    /**
+     * Legacy "case 2" path: the user pastes their own Cloudflare
+     * token and points it at one of their domains. In the multi-zone
+     * model this either inserts a new zone with source=user or
+     * updates the existing source=user zone for that domain.
      *
      * @param array<string, mixed> $post
      * @return array{0: bool, 1: list<string>}
@@ -970,42 +1113,67 @@ final class UserController
         $enabled = isset($post['enabled']) && (string) $post['enabled'] !== '';
         $defaultsProxied = isset($post['defaults_proxied']) && (string) $post['defaults_proxied'] !== '';
 
-        if ($zoneName !== '' && preg_match('/^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?$/', $zoneName) !== 1) {
-            $errors[] = 'Zone name is not a valid domain.';
+        if ($zoneName === '') {
+            return [false, ['Zone name is required.']];
+        }
+        if (preg_match('/^[a-z0-9]([a-z0-9\-\.]*[a-z0-9])?$/', $zoneName) !== 1) {
+            return [false, ['Zone name is not a valid domain.']];
         }
 
         $storage = $this->storageFor($user);
-        $current = $storage->load($user);
-        $effectiveToken = $token !== '' ? $token : $current['token'];
-        $zoneId = $current['zone_id'];
+        $cfg = $storage->load($user);
+        $effectiveToken = $token !== '' ? $token : $cfg['token'];
+        if ($effectiveToken === '') {
+            return [false, ['A Cloudflare API token is required.']];
+        }
 
-        if ($enabled && $zoneName !== '' && $effectiveToken !== '') {
-            $client = new CloudflareApiClient($effectiveToken);
-            $resolved = $client->findZoneId($zoneName);
-            if ($resolved === null) {
-                $errors[] = 'Could not resolve that zone from Cloudflare. Check the token scope and zone name.';
-            } else {
-                $zoneId = $resolved;
+        $client = new CloudflareApiClient($effectiveToken);
+        $zoneId = $client->findZoneId($zoneName);
+        if ($zoneId === null) {
+            return [false, ['Could not resolve that zone from Cloudflare. Check the token scope and zone name.']];
+        }
+
+        try {
+            if ($enabled) {
+                $this->markEnrolled($user);
             }
+        } catch (\Throwable $e) {
+            return [false, ['Could not enable plugin for your account: ' . $e->getMessage()]];
         }
 
-        if ($errors !== []) {
-            return [false, $errors];
-        }
-
-        $storage->save($user, [
-            'enabled' => $enabled,
+        $existing = UserConfigStorage::findZoneByName($cfg, $zoneName);
+        $newZone = [
             'zone_id' => $zoneId,
             'zone_name' => $zoneName,
+            'enabled' => $enabled,
             'defaults' => ['proxied' => $defaultsProxied],
             'source' => UserConfigStorage::SOURCE_USER,
-            'token' => $token,
-        ]);
+            'sync_state' => $enabled
+                ? UserConfigStorage::STATE_PENDING_DIFF
+                : ($existing['sync_state'] ?? UserConfigStorage::STATE_IDLE),
+            'last_error' => '',
+        ];
+        $cfg['token'] = $effectiveToken;
+        $cfg = UserConfigStorage::upsertZone($cfg, $newZone);
+        $storage->save($user, $cfg);
 
-        if ($enabled) {
-            $this->markEnrolled($user);
-        } else {
-            $this->markUnenrolled($user);
+        // If the user just disabled their only zone, unenroll them.
+        if (!$enabled) {
+            $stillActive = false;
+            foreach ($cfg['zones'] as $z) {
+                if ($z['enabled']) {
+                    $stillActive = true;
+
+                    break;
+                }
+            }
+            if (!$stillActive) {
+                try {
+                    $this->markUnenrolled($user);
+                } catch (\Throwable) {
+                    // tolerate; admin can clean up
+                }
+            }
         }
 
         $this->logFor($user)->info('user config saved', [

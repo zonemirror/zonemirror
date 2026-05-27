@@ -9,11 +9,16 @@ use ZoneMirror\Domain\DnsDiff;
 
 /**
  * Persist a {@see DnsDiff} so the cPanel-user UI can render it without
- * holding any admin secret. The file lives at:
+ * holding any admin secret. One file per (user, zone):
  *
- *   /var/cpanel/zonemirror/users/<user>/diff.json   (0644 root:root)
+ *   /var/cpanel/zonemirror/users/<user>/zones/<zone_id>/diff.json
+ *   (0644 root:root)
  *
- * It is intentionally in the system tree, not under the user's home:
+ * One file per zone — not one per user — because each connected zone
+ * has its own compute/review lifecycle; one zone reaching
+ * `awaiting_review` must not block another from refreshing.
+ *
+ * Lives in the system tree, not the user's home:
  *  - The daemon (root) writes; the user can only read. Putting it under
  *    ~/.zonemirror would tempt the hook code to try to "fix" it.
  *  - The content is non-sensitive: zone name, zone id, per-record local
@@ -22,12 +27,19 @@ use ZoneMirror\Domain\DnsDiff;
  * Race-free writes use the standard "write tmp + rename" dance. Stale
  * reads from a half-written file would otherwise show the user a
  * misleading partial diff.
+ *
+ * Legacy fallback: load() honours the pre-v2 path
+ * (`users/<user>/diff.json`) when the zone-specific path is missing.
+ * That keeps a daemon read working between the v2 deploy and the
+ * migrator running, so a stale "Computing diff" panel from a single-
+ * zone user can still resolve. The migrator moves the file into place
+ * exactly once.
  */
 final class DiffStorage
 {
-    public function save(string $user, DnsDiff $diff): void
+    public function save(string $user, string $zoneId, DnsDiff $diff): void
     {
-        $path = Paths::userDiffFile($user);
+        $path = Paths::userDiffFile($user, $zoneId);
         $dir = dirname($path);
         if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
             throw new RuntimeException('Unable to create user diff dir: ' . $dir);
@@ -55,16 +67,25 @@ final class DiffStorage
 
     /**
      * Read the diff as a plain associative array. Returns null when no
-     * diff has been computed yet (typical for a freshly-connected
-     * domain whose first daemon cycle hasn't run yet).
+     * diff has been computed yet (typical for a freshly-connected zone
+     * whose first daemon cycle hasn't run yet).
+     *
+     * Falls back to the legacy single-file path
+     * (`users/<user>/diff.json`) when the zone-specific path is
+     * missing — only useful between the v2 deploy and the migrator
+     * completing.
      *
      * @return array<string, mixed>|null
      */
-    public function load(string $user): ?array
+    public function load(string $user, string $zoneId): ?array
     {
-        $path = Paths::userDiffFile($user);
+        $path = Paths::userDiffFile($user, $zoneId);
         if (!is_file($path)) {
-            return null;
+            $legacy = Paths::userDiffFile($user);
+            if (!is_file($legacy)) {
+                return null;
+            }
+            $path = $legacy;
         }
         $raw = @file_get_contents($path);
         if ($raw === false || $raw === '') {
@@ -76,11 +97,17 @@ final class DiffStorage
         return is_array($decoded) ? $decoded : null;
     }
 
-    public function remove(string $user): void
+    public function remove(string $user, string $zoneId): void
     {
-        $path = Paths::userDiffFile($user);
+        $path = Paths::userDiffFile($user, $zoneId);
         if (is_file($path)) {
             @unlink($path);
+        }
+        // Legacy fallback: clear the v1 path too so a future load()
+        // doesn't resurrect a stale diff.
+        $legacy = Paths::userDiffFile($user);
+        if (is_file($legacy)) {
+            @unlink($legacy);
         }
     }
 }

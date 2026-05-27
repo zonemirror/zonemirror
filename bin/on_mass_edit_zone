@@ -64,10 +64,25 @@ if ($user === '' || $user === 'root') {
 $log = new FileLogger(Paths::userLogFile($user), LogLevel::Info);
 
 try {
+    $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
+    $args = is_array($data['args'] ?? null) ? $data['args'] : [];
+    $domain = (string) ($args['zone'] ?? $args['domain'] ?? '');
+    if ($domain === '') {
+        exit(0);
+    }
+
+    // Match the edited domain against the user's connected zones.
+    // cPanel scopes the hook by user, but a user with multiple addon
+    // domains may edit a zone that ZoneMirror is not configured to
+    // mirror — those silently drop.
+    $zone = UserConfigMetadataReader::zoneForDomain($user, $domain);
+    if ($zone === null) {
+        exit(0);
+    }
     $meta = UserConfigMetadataReader::read($user);
     $hasCredentialPath = $meta['has_token']
-        || $meta['source'] === UserConfigStorage::SOURCE_ADMIN;
-    if (!$meta['enabled'] || $meta['zone_id'] === '' || !$hasCredentialPath) {
+        || $zone['source'] === UserConfigStorage::SOURCE_ADMIN;
+    if (!$hasCredentialPath) {
         exit(0);
     }
 
@@ -77,24 +92,10 @@ try {
     }
     $systemDefaults = $systemStorage->load();
     $defaults = [
-        'proxied'  => $meta['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
+        'proxied'  => $zone['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
         'ttl'      => $systemDefaults['defaults']['ttl'],
         'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
     ];
-
-    $data = is_array($payload['data'] ?? null) ? $payload['data'] : [];
-    $args = is_array($data['args'] ?? null) ? $data['args'] : [];
-    $domain = (string) ($args['zone'] ?? $args['domain'] ?? '');
-    if ($domain === '') {
-        exit(0);
-    }
-
-    // Only sync events for the user's connected zone. cPanel scopes the
-    // hook by user, but a user with multiple addon domains may edit a
-    // zone that ZoneMirror is not configured to mirror.
-    if (strcasecmp(rtrim($domain, '.'), rtrim($meta['zone_name'], '.')) !== 0) {
-        exit(0);
-    }
 
     $isUapiDns = strcasecmp((string) ($args['cpanel_jsonapi_module'] ?? ''), 'DNS') === 0
         || isset($args['add']) || isset($args['edit']) || isset($args['remove']);
@@ -120,6 +121,7 @@ try {
                 record: $dns,
                 idempotencyKey: HookPayloadParser::idempotencyKey('upsert', $domain, $record),
                 createdAt: time(),
+                zoneId: $zone['zone_id'],
             ));
         }
         exit(0);
@@ -151,6 +153,7 @@ try {
                 record: $dns,
                 idempotencyKey: HookPayloadParser::idempotencyKey('upsert', $domain, $normalised),
                 createdAt: $now,
+                zoneId: $zone['zone_id'],
             ));
             $upserted++;
         }
@@ -159,9 +162,10 @@ try {
     // Removes: cPanel only gives us a line_index, which is meaningless
     // post-mutation. We can't enqueue a Delete event because the daemon
     // needs (type, name) to look up the CF record id. Instead, flip the
-    // sync_state so the daemon's next cycle recomputes the diff and the
-    // remove surfaces as a `cloudflare_only` row the user (or a future
-    // auto-prune policy) can act on.
+    // edited zone's sync_state so the daemon's next cycle recomputes the
+    // diff and the remove surfaces as a `cloudflare_only` row the user
+    // (or a future auto-prune policy) can act on. Only this zone is
+    // flipped; the user's other connections stay where they are.
     $removes = HookPayloadParser::decodeMassEditField($args['remove'] ?? null);
     if ($removes !== []) {
         $removeCount = count($removes);
@@ -169,16 +173,11 @@ try {
             new ConfigCrypto(new KeyStore(Paths::userKeyFile($user)))
         );
         $cfg = $storage->load($user);
-        if ($cfg['enabled']) {
-            $storage->save($user, [
-                'enabled'    => $cfg['enabled'],
-                'zone_id'    => $cfg['zone_id'],
-                'zone_name'  => $cfg['zone_name'],
-                'defaults'   => $cfg['defaults'],
-                'source'     => $cfg['source'],
-                'token'      => $cfg['token'],
-                'sync_state' => UserConfigStorage::STATE_PENDING_DIFF,
-            ]);
+        $entry = UserConfigStorage::findZone($cfg, $zone['zone_id']);
+        if ($entry !== null && $entry['enabled']) {
+            $entry['sync_state'] = UserConfigStorage::STATE_PENDING_DIFF;
+            $cfg = UserConfigStorage::upsertZone($cfg, $entry);
+            $storage->save($user, $cfg);
         }
     }
 

@@ -45,11 +45,12 @@ final class SqliteQueue
         }
         $stmt = $pdo->prepare(
             'INSERT OR IGNORE INTO events
-             (idempotency_key, domain, action, record_json, attempts, next_run_at, created_at)
-             VALUES (?, ?, ?, ?, 0, ?, ?)'
+             (idempotency_key, zone_id, domain, action, record_json, attempts, next_run_at, created_at)
+             VALUES (?, ?, ?, ?, ?, 0, ?, ?)'
         );
         $stmt->execute([
             $event->idempotencyKey,
+            $event->zoneId,
             $event->domain,
             $event->action->value,
             json_encode($payload, JSON_UNESCAPED_SLASHES),
@@ -62,7 +63,7 @@ final class SqliteQueue
      * Atomically claim the next ready event. Returns null when the queue is
      * idle. Caller is responsible for calling ack() or fail() afterwards.
      *
-     * @return array{id: int, domain: string, action: EventAction, record: DnsRecord, attempts: int, idempotency_key: string, target_cloudflare_id: ?string}|null
+     * @return array{id: int, zone_id: string, domain: string, action: EventAction, record: DnsRecord, attempts: int, idempotency_key: string, target_cloudflare_id: ?string}|null
      */
     public function claim(int $visibilityTimeoutSeconds = 120): ?array
     {
@@ -72,7 +73,7 @@ final class SqliteQueue
         try {
             $now = time();
             $stmt = $pdo->prepare(
-                'SELECT id, idempotency_key, domain, action, record_json, attempts
+                'SELECT id, idempotency_key, zone_id, domain, action, record_json, attempts
                  FROM events
                  WHERE dead_at IS NULL AND next_run_at <= ?
                  ORDER BY id ASC
@@ -103,6 +104,7 @@ final class SqliteQueue
 
             return [
                 'id' => (int) $row['id'],
+                'zone_id' => (string) ($row['zone_id'] ?? ''),
                 'domain' => (string) $row['domain'],
                 'action' => EventAction::from((string) $row['action']),
                 'record' => $this->hydrateRecord($payload),
@@ -146,18 +148,56 @@ final class SqliteQueue
         $stmt->execute([$newAttempts, time() + $delay, $this->truncate($reason), $id]);
     }
 
-    public function depth(): int
+    /**
+     * One-shot migration helper: every row without a zone_id gets the
+     * given $zoneId. Used by `bin/zonemirror migrate-v2` to back-fill
+     * legacy rows from a single-zone install. Idempotent; running this
+     * a second time updates no rows because none have zone_id = ''.
+     *
+     * Returns the number of rows touched, for the migrator's progress
+     * log.
+     */
+    public function backfillEmptyZoneId(string $zoneId): int
     {
-        $stmt = $this->pdo()->query('SELECT COUNT(*) AS n FROM events WHERE dead_at IS NULL');
-        $row = $stmt !== false ? $stmt->fetch(PDO::FETCH_ASSOC) : null;
+        if ($zoneId === '') {
+            return 0;
+        }
+        $stmt = $this->pdo()->prepare('UPDATE events SET zone_id = ? WHERE zone_id = ""');
+        $stmt->execute([$zoneId]);
+
+        return $stmt->rowCount();
+    }
+
+    public function depth(?string $zoneId = null): int
+    {
+        if ($zoneId === null) {
+            $stmt = $this->pdo()->query('SELECT COUNT(*) AS n FROM events WHERE dead_at IS NULL');
+            $row = $stmt !== false ? $stmt->fetch(PDO::FETCH_ASSOC) : null;
+
+            return (int) ($row['n'] ?? 0);
+        }
+        $stmt = $this->pdo()->prepare(
+            'SELECT COUNT(*) AS n FROM events WHERE dead_at IS NULL AND zone_id = ?'
+        );
+        $stmt->execute([$zoneId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return (int) ($row['n'] ?? 0);
     }
 
-    public function deadLetterCount(): int
+    public function deadLetterCount(?string $zoneId = null): int
     {
-        $stmt = $this->pdo()->query('SELECT COUNT(*) AS n FROM events WHERE dead_at IS NOT NULL');
-        $row = $stmt !== false ? $stmt->fetch(PDO::FETCH_ASSOC) : null;
+        if ($zoneId === null) {
+            $stmt = $this->pdo()->query('SELECT COUNT(*) AS n FROM events WHERE dead_at IS NOT NULL');
+            $row = $stmt !== false ? $stmt->fetch(PDO::FETCH_ASSOC) : null;
+
+            return (int) ($row['n'] ?? 0);
+        }
+        $stmt = $this->pdo()->prepare(
+            'SELECT COUNT(*) AS n FROM events WHERE dead_at IS NOT NULL AND zone_id = ?'
+        );
+        $stmt->execute([$zoneId]);
+        $row = $stmt->fetch(PDO::FETCH_ASSOC);
 
         return (int) ($row['n'] ?? 0);
     }
@@ -225,6 +265,7 @@ final class SqliteQueue
             'CREATE TABLE IF NOT EXISTS events(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 idempotency_key TEXT NOT NULL UNIQUE,
+                zone_id TEXT NOT NULL DEFAULT "",
                 domain TEXT NOT NULL,
                 action TEXT NOT NULL,
                 record_json TEXT NOT NULL,
@@ -237,6 +278,34 @@ final class SqliteQueue
         );
         $pdo->query('CREATE INDEX IF NOT EXISTS idx_events_ready ON events(next_run_at) WHERE dead_at IS NULL');
         $pdo->query('CREATE INDEX IF NOT EXISTS idx_events_dead ON events(dead_at)');
+
+        // Idempotent v1 → multi-zone migration: existing queues created
+        // before the zone_id column existed get it added now. The
+        // backfill of legacy rows (UPDATE events SET zone_id = '<the
+        // user's only zone>' WHERE zone_id = '') is the migrator's
+        // job — we can't know the user's zone id from inside the queue
+        // class. SQLite ADD COLUMN doesn't support IF NOT EXISTS, so we
+        // peek at the schema first. Must happen BEFORE the zone-id
+        // index creation below — a pre-v2 table doesn't have the
+        // column yet, and `CREATE INDEX ON missing_column` errors.
+        $this->addColumnIfMissing($pdo, 'zone_id', 'TEXT NOT NULL DEFAULT ""');
+        $pdo->query('CREATE INDEX IF NOT EXISTS idx_events_zone ON events(zone_id)');
+    }
+
+    private function addColumnIfMissing(PDO $pdo, string $column, string $columnDef): void
+    {
+        $stmt = $pdo->query('PRAGMA table_info(events)');
+        if ($stmt === false) {
+            return;
+        }
+        /** @var list<array<string, mixed>> $rows */
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $row) {
+            if ((string) ($row['name'] ?? '') === $column) {
+                return;
+            }
+        }
+        $pdo->exec("ALTER TABLE events ADD COLUMN $column $columnDef");
     }
 
     /**

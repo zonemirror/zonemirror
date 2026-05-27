@@ -96,7 +96,34 @@ $controller = new UserController(null, null, null, $enrollmentBackend);
 if (($_GET['action'] ?? '') === 'queue_status') {
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store');
-    echo json_encode($controller->queueStatus($user));
+    $qs = $controller->queueStatus($user);
+    // Back-compat shape: the JS poll was written for the v1 single-zone
+    // world and reads flat sync_state / queue_depth / dead_letters at
+    // the top level. Flatten the zone identified by ?zone=<id> (or the
+    // first zone present) so the existing JS keeps working; the
+    // per-zone map stays available under `zones` for the future
+    // multi-card UI.
+    $selZoneId = isset($_GET['zone']) ? (string) $_GET['zone'] : '';
+    $flat = null;
+    if ($selZoneId !== '' && isset($qs['zones'][$selZoneId])) {
+        $flat = $qs['zones'][$selZoneId];
+    } else {
+        foreach ($qs['zones'] as $zid => $row) {
+            $flat = $row;
+            $selZoneId = $zid;
+
+            break;
+        }
+    }
+    echo json_encode([
+        'zones' => $qs['zones'],
+        'ts' => $qs['ts'],
+        'sync_state' => $flat['sync_state'] ?? UserConfigStorage::STATE_IDLE,
+        'queue_depth' => $flat['queue_depth'] ?? 0,
+        'dead_letters' => $flat['dead_letters'] ?? 0,
+        'pending_keys' => $flat['pending_keys'] ?? [],
+        'zone_id' => $selZoneId,
+    ]);
     exit;
 }
 
@@ -106,6 +133,46 @@ $vm = $controller->handle(
     $_POST,
     $allDomains,
 );
+
+// Multi-zone shim. The wizard markup further down was written for the
+// pre-v2 single-zone world: it reads $vm['zone_name'], $vm['sync_state']
+// etc. as flat fields. To keep that markup readable we pick one
+// "primary" zone here — the one named in ?zone=<id>, or the first
+// enabled zone otherwise — and flatten its per-zone fields back onto
+// $vm. The page also renders a zone-picker dropdown at the top and an
+// "Available domains" panel below so the user can connect / re-enable
+// other zones; switching zones is a ?zone=<id> link from the picker.
+$selectedZoneId = isset($_GET['zone']) ? (string) $_GET['zone'] : '';
+$primaryZone = null;
+foreach ($vm['zones'] as $z) {
+    if ($selectedZoneId !== '' && $z['zone_id'] === $selectedZoneId) {
+        $primaryZone = $z;
+
+        break;
+    }
+}
+if ($primaryZone === null) {
+    foreach ($vm['zones'] as $z) {
+        if ($z['enabled']) {
+            $primaryZone = $z;
+
+            break;
+        }
+    }
+}
+
+$vm['enabled']          = $primaryZone !== null && $primaryZone['enabled'];
+$vm['zone_id']          = $primaryZone['zone_id'] ?? '';
+$vm['zone_name']        = $primaryZone['zone_name'] ?? '';
+$vm['sync_state']       = $primaryZone['sync_state'] ?? UserConfigStorage::STATE_IDLE;
+$vm['last_error']       = $primaryZone['last_error'] ?? '';
+$vm['source']           = $primaryZone['source'] ?? UserConfigStorage::SOURCE_USER;
+$vm['defaults_proxied'] = $primaryZone['defaults_proxied'] ?? false;
+$vm['queue_depth']      = $primaryZone['queue_depth'] ?? 0;
+$vm['dead_letters']     = $primaryZone['dead_letters'] ?? 0;
+$vm['diff']             = $primaryZone['diff'] ?? null;
+$vm['locks']            = $primaryZone['locks'] ?? [];
+$vm['locks_count']      = $primaryZone['locks_count'] ?? 0;
 
 // AJAX POST contract: the new in-page Apply/Refresh flow sends an
 // X-Requested-With header so we know to return a compact JSON envelope
@@ -567,6 +634,35 @@ if ($autoRefresh) {
     <?= zm_alert('info', $h($vm['test_result']), '') ?>
   <?php endif; ?>
 
+  <?php
+  // Connected zones — list every enabled zone the user has and let
+  // them switch between them with a GET ?zone=<id>. The currently-
+  // active zone is highlighted; the click target navigates so the
+  // browser back button works the way users expect for a "pick which
+  // zone to manage" UI.
+  $connected = [];
+  $disabled  = [];
+  foreach ($vm['zones'] as $z) {
+      if ($z['enabled']) {
+          $connected[] = $z;
+      } else {
+          $disabled[] = $z;
+      }
+  }
+  ?>
+  <?php if (count($connected) > 1): ?>
+    <div class="zm-zone-picker" style="margin: 0.5rem 0 1rem; display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center;">
+      <span class="zm-muted" style="margin-right: 0.4rem;">Connected zones:</span>
+      <?php foreach ($connected as $cz): ?>
+        <a href="?zone=<?= $h(urlencode($cz['zone_id'])) ?>"
+           class="btn <?= $cz['zone_id'] === $vm['zone_id'] ? 'btn-primary' : 'btn-default' ?>"
+           style="font-size: 0.9em; padding: 0.25rem 0.6rem;">
+          <?= $h($cz['zone_name']) ?>
+        </a>
+      <?php endforeach; ?>
+    </div>
+  <?php endif; ?>
+
   <?php /* ─── Banner: connected-domain header + Refresh/Disconnect ─── */ ?>
   <?php if ($vm['enabled']): ?>
     <div class="zm-banner">
@@ -593,12 +689,14 @@ if ($autoRefresh) {
         <form method="post" data-zm-form="refresh">
           <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
           <input type="hidden" name="action" value="refresh_diff">
+          <input type="hidden" name="zone_id" value="<?= $h($vm['zone_id']) ?>">
           <button type="submit" class="btn btn-default">Refresh diff</button>
         </form>
         <form method="post" data-zm-confirm-title="Disconnect"
               data-zm-confirm-msg="Stop syncing <?= $h($vm['zone_name']) ?> to Cloudflare? Your local zone keeps unchanged.">
           <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
           <input type="hidden" name="action" value="disconnect">
+          <input type="hidden" name="zone_id" value="<?= $h($vm['zone_id']) ?>">
           <button type="submit" class="btn btn-default">Disconnect</button>
         </form>
       </div>
@@ -652,6 +750,7 @@ if ($autoRefresh) {
       <form id="zm-lock-add-form" class="zm-lock-add-form" autocomplete="off">
         <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
         <input type="hidden" name="action" value="add_lock">
+        <input type="hidden" name="zone_id" value="<?= $h($vm['zone_id']) ?>">
         <div class="zm-lock-add-row">
           <label>
             <span class="zm-muted">Scope</span>
@@ -752,6 +851,7 @@ if ($autoRefresh) {
     <form method="post" style="margin-top: 0.6rem;" data-zm-form="refresh">
       <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
       <input type="hidden" name="action" value="refresh_diff">
+      <input type="hidden" name="zone_id" value="<?= $h($vm['zone_id']) ?>">
       <button type="submit" class="btn btn-primary">Retry</button>
     </form>
     <?php $body = (string) ob_get_clean(); ?>
@@ -839,6 +939,7 @@ if ($autoRefresh) {
     <form method="post" id="zm-diff-form" data-zm-form="apply">
       <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
       <input type="hidden" name="action" value="apply">
+      <input type="hidden" name="zone_id" value="<?= $h($vm['zone_id']) ?>">
 
       <div class="zm-cards">
         <?php
@@ -1071,17 +1172,26 @@ if ($autoRefresh) {
 
   <?php endif; ?>
 
-  <?php /* ─── Domain list (always shown — also lets a connected user add more later) ─── */ ?>
-  <?php if ($vm['domains'] !== [] && (!$vm['enabled'] || $vm['sync_state'] === UserConfigStorage::STATE_IDLE)): ?>
+  <?php /* ─── Other cPanel domains (always shown) ─── */ ?>
+  <?php if ($vm['domains'] !== []): ?>
+    <h3 style="margin-top: 2rem;">Your other domains</h3>
+    <p class="zm-muted" style="margin-top: 0;">
+      Connect another cPanel domain, or re-enable one you previously
+      disconnected. Each domain syncs independently with its own
+      review wizard above.
+    </p>
     <div class="zm-domains">
       <?php foreach ($vm['domains'] as $d): ?>
+        <?php $isPrimary = $d['zone_id'] !== '' && $d['zone_id'] === $vm['zone_id']; ?>
         <div class="zm-domain">
           <div>
             <div class="name"><?= $h($d['name']) ?></div>
             <?php if ($d['status'] === UserController::DOMAIN_CONNECTED_ADMIN): ?>
-              <div class="meta"><span class="zm-pill ok">Connected</span> &nbsp;Syncing automatically.</div>
+              <div class="meta"><span class="zm-pill ok">Connected</span> &nbsp;Syncing automatically<?= $isPrimary ? ' &nbsp;<em>(active above)</em>' : '' ?>.</div>
             <?php elseif ($d['status'] === UserController::DOMAIN_CONNECTED_USER): ?>
-              <div class="meta"><span class="zm-pill ok">Connected</span> &nbsp;Using your own Cloudflare token.</div>
+              <div class="meta"><span class="zm-pill ok">Connected</span> &nbsp;Using your own Cloudflare token<?= $isPrimary ? ' &nbsp;<em>(active above)</em>' : '' ?>.</div>
+            <?php elseif ($d['status'] === UserController::DOMAIN_DISABLED): ?>
+              <div class="meta"><span class="zm-pill" style="background:#eee;color:#555;">Disabled</span> &nbsp;Previously connected. Re-enable to resume syncing.</div>
             <?php elseif ($d['status'] === UserController::DOMAIN_AVAILABLE): ?>
               <div class="meta"><span class="zm-pill avail">Available</span> &nbsp;Ready to connect with one click.</div>
             <?php else: ?>
@@ -1090,8 +1200,17 @@ if ($autoRefresh) {
           </div>
 
           <div class="actions zm-btn-row">
-            <?php if ($d['is_current']): ?>
+            <?php if ($isPrimary): ?>
               <span class="meta" style="color:#888;">&nbsp;</span>
+            <?php elseif ($d['status'] === UserController::DOMAIN_CONNECTED_ADMIN || $d['status'] === UserController::DOMAIN_CONNECTED_USER): ?>
+              <a href="?zone=<?= $h(urlencode($d['zone_id'])) ?>" class="btn btn-default">Manage</a>
+            <?php elseif ($d['status'] === UserController::DOMAIN_DISABLED): ?>
+              <form method="post">
+                <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
+                <input type="hidden" name="action" value="reenable">
+                <input type="hidden" name="zone_id" value="<?= $h($d['zone_id']) ?>">
+                <button type="submit" class="btn btn-primary">Re-enable</button>
+              </form>
             <?php elseif ($d['status'] === UserController::DOMAIN_AVAILABLE): ?>
               <form method="post">
                 <input type="hidden" name="csrf" value="<?= $h($vm['csrf']) ?>">
@@ -1183,6 +1302,11 @@ if ($autoRefresh) {
   // Latest CSRF. The classic forms render with this; we rotate it on every
   // AJAX response since Csrf::verify() invalidates the token on use.
   var csrf = '<?= $h($vm['csrf']) ?>';
+  // Zone-scoped POSTs in the multi-zone world need to tell the
+  // controller which zone they target. The toggle/remove-lock AJAX
+  // FormData builds happen outside any form, so they read this
+  // variable instead of relying on a hidden field.
+  var ZM_ZONE_ID = '<?= $h($vm['zone_id']) ?>';
 
   // ──── Custom <dialog> confirm ──────────────────────────────────────
   function confirmDialog(t, m) {
@@ -1640,6 +1764,7 @@ if ($autoRefresh) {
     var fd = new FormData();
     fd.set('action', 'remove_lock');
     fd.set('lock_id', lockId);
+    fd.set('zone_id', ZM_ZONE_ID);
     fd.set('csrf', csrf);
     fetch(window.location.pathname, {
       method: 'POST',
@@ -1740,6 +1865,7 @@ if ($autoRefresh) {
     var fd = new FormData();
     fd.set('action', 'toggle_lock');
     fd.set('lock_key', key);
+    fd.set('zone_id', ZM_ZONE_ID);
     fd.set('csrf', csrf);
     fetch(window.location.pathname, {
       method: 'POST',

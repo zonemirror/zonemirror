@@ -42,14 +42,29 @@ final class HookHandler
         $log = new FileLogger(Paths::userLogFile($user), LogLevel::Info);
 
         try {
-            $meta = UserConfigMetadataReader::read($user);
+            $extracted = HookPayloadParser::extract($payload);
+            if ($extracted === null) {
+                return;
+            }
+
+            // Route the hook to the right zone by matching the affected
+            // domain against the user's connected zones. A user with N
+            // synced zones might edit DNS for one of them, all of them,
+            // or none — the hook ignores edits on non-synced zones.
+            $zone = UserConfigMetadataReader::zoneForDomain($user, $extracted['domain']);
+            if ($zone === null) {
+                return;
+            }
+
             // Two paths to Cloudflare: the user pasted their own token
-            // (source=user, has_token=true) OR an admin token covers this
-            // domain (source=admin, no per-user token). Either is enough
-            // to enqueue; the daemon resolves the credential at sync time.
+            // (source=user, plus has_token=true at the user level) OR
+            // an admin token covers this zone (source=admin, no per-user
+            // token). Either is enough to enqueue; the daemon resolves
+            // the credential at sync time.
+            $meta = UserConfigMetadataReader::read($user);
             $hasCredentialPath = $meta['has_token']
-                || $meta['source'] === \ZoneMirror\Infrastructure\Storage\UserConfigStorage::SOURCE_ADMIN;
-            if (!$meta['enabled'] || $meta['zone_id'] === '' || !$hasCredentialPath) {
+                || $zone['source'] === \ZoneMirror\Infrastructure\Storage\UserConfigStorage::SOURCE_ADMIN;
+            if (!$hasCredentialPath) {
                 return;
             }
 
@@ -61,13 +76,8 @@ final class HookHandler
             }
             $systemDefaults = $systemStorage->load();
 
-            $extracted = HookPayloadParser::extract($payload);
-            if ($extracted === null) {
-                return;
-            }
-
             $defaults = [
-                'proxied' => $meta['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
+                'proxied' => $zone['defaults']['proxied'] || $systemDefaults['defaults']['proxied'],
                 'ttl' => $systemDefaults['defaults']['ttl'],
                 'auto_ttl' => (bool) ($systemDefaults['defaults']['auto_ttl'] ?? true),
             ];
@@ -87,12 +97,14 @@ final class HookHandler
                     $extracted['raw'],
                 ),
                 createdAt: time(),
+                zoneId: $zone['zone_id'],
             );
 
             (new SqliteQueue($user))->enqueue($event);
             $log->info('event enqueued', [
                 'event' => $this->eventName,
                 'user' => $user,
+                'zone' => $zone['zone_name'],
                 'action' => $this->action->value,
                 'type' => $record->type->value,
                 'name' => $record->name,

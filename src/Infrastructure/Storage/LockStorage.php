@@ -36,7 +36,10 @@ namespace ZoneMirror\Infrastructure\Storage;
  *
  * File layout — JSON, owned by the cPanel user, plaintext (locks are
  * metadata, not secrets), atomic tmp+rename writes so a daemon racing
- * a UI write never sees a half-flushed file:
+ * a UI write never sees a half-flushed file. One file per (user, zone)
+ * so two zones never share a lock table:
+ *
+ *   ~user/.zonemirror/zones/<zone_id>/locks.json
  *
  *   {
  *     "version": 2,
@@ -56,6 +59,10 @@ namespace ZoneMirror\Infrastructure\Storage;
  *
  * Reads transparently upgrade v1 files (which only carried type_name
  * scope under an opaque hash) so existing locks survive an upgrade.
+ * They also fall back to the legacy single-file path
+ * (`~user/.zonemirror/locks.json`) when the zone-specific file is
+ * absent — only matters between the v2 deploy and the migrator
+ * running.
  */
 final class LockStorage
 {
@@ -78,14 +85,14 @@ final class LockStorage
     /**
      * @return array<string, array{scope: string, type: string, name: string, content: ?string, priority: ?int, reason: string, created_at: int}>
      */
-    public function all(string $user): array
+    public function all(string $user, string $zoneId): array
     {
-        return $this->loadRaw($user)['locks'];
+        return $this->loadRaw($user, $zoneId)['locks'];
     }
 
-    public function isLockedById(string $user, string $lockId): bool
+    public function isLockedById(string $user, string $zoneId, string $lockId): bool
     {
-        return array_key_exists($lockId, $this->all($user));
+        return array_key_exists($lockId, $this->all($user, $zoneId));
     }
 
     /**
@@ -232,6 +239,7 @@ final class LockStorage
      */
     public function add(
         string $user,
+        string $zoneId,
         string $scope,
         string $type = '',
         string $name = '',
@@ -271,7 +279,7 @@ final class LockStorage
         }
 
         $id = self::lockIdFor($scope, $type, $name, $content, $priority);
-        $current = $this->loadRaw($user);
+        $current = $this->loadRaw($user, $zoneId);
         $current['locks'][$id] = [
             'scope'      => $scope,
             'type'       => $type,
@@ -281,19 +289,19 @@ final class LockStorage
             'reason'     => $reason,
             'created_at' => time(),
         ];
-        $this->saveRaw($user, $current);
+        $this->saveRaw($user, $zoneId, $current);
 
         return $id;
     }
 
-    public function remove(string $user, string $lockId): bool
+    public function remove(string $user, string $zoneId, string $lockId): bool
     {
-        $current = $this->loadRaw($user);
+        $current = $this->loadRaw($user, $zoneId);
         if (!isset($current['locks'][$lockId])) {
             return false;
         }
         unset($current['locks'][$lockId]);
-        $this->saveRaw($user, $current);
+        $this->saveRaw($user, $zoneId, $current);
 
         return true;
     }
@@ -301,11 +309,18 @@ final class LockStorage
     /**
      * @return array{version: int, locks: array<string, array{scope: string, type: string, name: string, content: ?string, priority: ?int, reason: string, created_at: int}>}
      */
-    private function loadRaw(string $user): array
+    private function loadRaw(string $user, string $zoneId): array
     {
-        $path = Paths::userLocksFile($user);
+        $path = Paths::userLocksFile($user, $zoneId);
         if (!is_file($path)) {
-            return ['version' => self::VERSION, 'locks' => []];
+            // Legacy fallback: the pre-v2 single-file path. Only useful
+            // between the deploy and the migrator running; once that's
+            // done, every read hits the zone-specific path.
+            $legacy = Paths::userLocksFile($user);
+            if (!is_file($legacy)) {
+                return ['version' => self::VERSION, 'locks' => []];
+            }
+            $path = $legacy;
         }
         $raw = @file_get_contents($path);
         if (!is_string($raw) || $raw === '') {
@@ -355,8 +370,11 @@ final class LockStorage
 
         // Persist the migration so subsequent reads are cheap and the
         // file on disk reflects v2 even before anyone clicks anything.
+        // The write always goes to the zone-specific path even when the
+        // legacy single-file was the source — that promotes the v1 file
+        // into the v2 zones/<zone_id>/ subdir in one step.
         if ($version < self::VERSION) {
-            $this->saveRaw($user, ['version' => self::VERSION, 'locks' => $locks]);
+            $this->saveRaw($user, $zoneId, ['version' => self::VERSION, 'locks' => $locks]);
         }
 
         return ['version' => self::VERSION, 'locks' => $locks];
@@ -365,9 +383,9 @@ final class LockStorage
     /**
      * @param array{version: int, locks: array<string, mixed>} $data
      */
-    private function saveRaw(string $user, array $data): void
+    private function saveRaw(string $user, string $zoneId, array $data): void
     {
-        $path = Paths::userLocksFile($user);
+        $path = Paths::userLocksFile($user, $zoneId);
         $dir = dirname($path);
         if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
             return;
