@@ -19,6 +19,7 @@ declare(strict_types=1);
 
 use ZoneMirror\Interface\Ui\AdminController;
 use ZoneMirror\Interface\Ui\AdminTokensController;
+use ZoneMirror\Interface\Ui\AdminTokensZonesController;
 
 $autoload = '/usr/local/cpanel/3rdparty/zonemirror/vendor/autoload.php';
 if (!is_file($autoload)) {
@@ -31,6 +32,25 @@ require $autoload;
 if (function_exists('posix_geteuid') && posix_geteuid() !== 0) {
     http_response_code(403);
     echo 'ZoneMirror admin must run as root.';
+    exit;
+}
+
+// JSON sub-route for the "expand a connection" disclosure. Lives here
+// rather than behind its own .cgi so the WHM session and the same-origin
+// iframe context the page is rendered in already cover it. Read-only;
+// no CSRF check — the page is root-gated by index.cgi upstream.
+$ajax = (string) ($_GET['ajax'] ?? '');
+if ($ajax !== '') {
+    header('Content-Type: application/json; charset=utf-8');
+    if ($ajax === 'list-zones') {
+        $zonesCtl = new AdminTokensZonesController();
+        $tokenId = (string) ($_GET['token'] ?? '');
+        echo json_encode($zonesCtl->listZones($tokenId));
+    } else {
+        http_response_code(400);
+        echo json_encode(['ok' => false, 'error' => 'Unknown ajax action.']);
+    }
+
     exit;
 }
 
@@ -184,6 +204,58 @@ $justConnected = $tokensVm['message'] !== '';
     table.tokens td.actions { text-align: right; white-space: nowrap; }
     table.tokens td.actions form { display: inline-block; margin-left: 0.4rem; }
 
+    /* connection-row expand toggle */
+    button.zm-expand {
+      background: transparent; color: #666; border: 1px solid transparent;
+      padding: 0 0.35rem; margin-right: 0.45rem; font-size: 0.95em;
+      line-height: 1; border-radius: 4px; vertical-align: baseline;
+    }
+    button.zm-expand:hover { background: #f0f4fa; color: #2a73c4; border-color: transparent; }
+    button.zm-expand .zm-chevron { display: inline-block; transition: transform 0.15s ease; }
+    button.zm-expand[aria-expanded="true"] .zm-chevron { transform: rotate(90deg); }
+
+    /* expanded details row */
+    tr.zm-token-details > td { background: #fafbfc; padding: 0.75rem 1rem 1rem; border-top: 0; }
+    .zm-account { margin-top: 1rem; }
+    .zm-account:first-child { margin-top: 0; }
+    .zm-account-head {
+      display: flex; flex-direction: column; gap: 0.05rem;
+      margin-bottom: 0.4rem; padding-bottom: 0.3rem;
+      border-bottom: 1px solid #e1e4e8;
+    }
+    .zm-account-name { font-weight: 600; font-size: 0.98em; color: #222; }
+    .zm-account-name.is-missing { color: #888; font-style: italic; font-weight: 500; }
+    .zm-account-id {
+      font-size: 0.78em; color: #777;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    table.zm-zones { width: 100%; border-collapse: collapse; font-size: 0.92em; }
+    table.zm-zones td {
+      padding: 0.25rem 0.5rem;
+      border-bottom: 1px solid #f0f0f0;
+      vertical-align: middle;
+    }
+    table.zm-zones tr:last-child td { border-bottom: 0; }
+    table.zm-zones td.s {
+      width: 1.5rem; text-align: center; font-weight: 700;
+    }
+    table.zm-zones td.s.s-ok   { color: #0a7d2e; }
+    table.zm-zones td.s.s-warn { color: #a07000; }
+    table.zm-zones td.s.s-err  { color: #a02020; }
+    table.zm-zones td.n {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    table.zm-zones td.p {
+      text-align: right; font-size: 0.85em; white-space: nowrap;
+    }
+    table.zm-zones td.p.s-ok   { color: #0a7d2e; }
+    table.zm-zones td.p.s-warn { color: #a07000; }
+    table.zm-zones td.p.s-err  { color: #a02020; }
+    .zm-stale-note {
+      font-size: 0.8em; color: #888; margin-top: 0.4rem;
+    }
+
     /* guided connect flow */
     .step-list { counter-reset: step; padding-left: 0; list-style: none; margin: 1rem 0; }
     .step-list li { counter-increment: step; padding: 0.25rem 0 0.25rem 2.2rem; position: relative; }
@@ -322,8 +394,16 @@ $justConnected = $tokensVm['message'] !== '';
       <tbody>
         <?php foreach ($tokensVm['tokens'] as $t): ?>
           <?php $accountsCount = $tokensVm['accounts_count_by_token'][$t->id] ?? 0; ?>
-          <tr>
+          <tr class="zm-token-row">
             <td>
+              <button type="button"
+                class="zm-expand"
+                aria-expanded="false"
+                aria-controls="zm-details-<?= $h($t->id) ?>"
+                data-token-id="<?= $h($t->id) ?>"
+                title="Show accounts and zones reachable by this connection">
+                <span aria-hidden="true" class="zm-chevron">&#9656;</span>
+              </button>
               <strong><?= $h($t->name) ?></strong>
               <div class="muted" style="font-size: 0.78em; margin-top: 0.15rem;">id <code><?= $h($t->id) ?></code></div>
             </td>
@@ -348,6 +428,13 @@ $justConnected = $tokensVm['message'] !== '';
                 <input type="hidden" name="id" value="<?= $h($t->id) ?>">
                 <button type="submit">Remove</button>
               </form>
+            </td>
+          </tr>
+          <tr class="zm-token-details" id="zm-details-<?= $h($t->id) ?>" data-token-id="<?= $h($t->id) ?>" hidden>
+            <td colspan="6">
+              <div class="zm-details-body" data-loaded="0">
+                <span class="muted">Loading accounts and zones&hellip;</span>
+              </div>
             </td>
           </tr>
         <?php endforeach; ?>
@@ -685,6 +772,147 @@ $justConnected = $tokensVm['message'] !== '';
     <?php endif; ?>
   </details>
 </div>
+
+<script>
+(function () {
+  // Wires the "expand a connection" disclosure on each token row.
+  //
+  // First click on a row fetches ?ajax=list-zones&token=... — a local
+  // SQLite read populated by IndexZones during the daemon's hourly
+  // sweep (and immediately after the operator clicks "Verify now" on a
+  // token). The response carries the Cloudflare account name + id and,
+  // per zone, the cached `permissions` array so the per-zone "DNS edit
+  // ok / read-only" badge is served without any Cloudflare round-trip.
+  //
+  // Subsequent clicks just toggle visibility; results stay on the row
+  // until the user reloads the page or clicks Verify now.
+
+  function renderAccountBlock(acct) {
+    var wrap = document.createElement('div');
+    wrap.className = 'zm-account';
+
+    var head = document.createElement('div');
+    head.className = 'zm-account-head';
+
+    var nameEl = document.createElement('div');
+    nameEl.className = 'zm-account-name';
+    if (acct.cf_account_name) {
+      nameEl.textContent = acct.cf_account_name;
+    } else {
+      nameEl.classList.add('is-missing');
+      nameEl.textContent = 'Account name not yet captured — click "Verify now" to refresh';
+    }
+    head.appendChild(nameEl);
+
+    var idEl = document.createElement('div');
+    idEl.className = 'zm-account-id';
+    idEl.textContent = acct.cf_account_id || '(unknown id)';
+    head.appendChild(idEl);
+
+    wrap.appendChild(head);
+
+    var table = document.createElement('table');
+    table.className = 'zm-zones';
+    var tbody = document.createElement('tbody');
+
+    acct.zones.forEach(function (z) {
+      var tr = document.createElement('tr');
+
+      var tdS = document.createElement('td');
+      tdS.className = 's';
+      var tdP = document.createElement('td');
+      tdP.className = 'p';
+
+      if (z.can_edit_dns) {
+        tdS.classList.add('s-ok');
+        tdS.textContent = '✓';
+        tdP.classList.add('s-ok');
+        tdP.textContent = 'DNS edit ok';
+      } else if (z.can_read_dns) {
+        tdS.classList.add('s-warn');
+        tdS.textContent = '⚠';
+        tdP.classList.add('s-warn');
+        tdP.textContent = 'read-only';
+      } else if (z.probed_at > 0) {
+        tdS.classList.add('s-warn');
+        tdS.textContent = '⚠';
+        tdP.classList.add('s-warn');
+        tdP.textContent = 'no DNS permission';
+      } else {
+        // No probed_at means this row predates the cache (legacy slice).
+        // Show neutral so the operator knows to click Verify now.
+        tdS.textContent = '–';
+        tdP.textContent = 'not verified yet';
+      }
+
+      var tdN = document.createElement('td');
+      tdN.className = 'n';
+      tdN.textContent = z.name;
+
+      tr.appendChild(tdS);
+      tr.appendChild(tdN);
+      tr.appendChild(tdP);
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+
+    return wrap;
+  }
+
+  function loadZones(tokenId, body) {
+    fetch('?ajax=list-zones&token=' + encodeURIComponent(tokenId), { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        body.textContent = '';
+        if (!data || !data.ok) {
+          var err = document.createElement('div');
+          err.className = 'err';
+          err.textContent = (data && data.error) ? data.error : 'Failed to load zones.';
+          body.appendChild(err);
+          return;
+        }
+        if (!data.accounts || data.accounts.length === 0) {
+          var none = document.createElement('div');
+          none.className = 'muted';
+          none.textContent = 'No zones indexed yet. Click "Verify now" on the connection above to refresh.';
+          body.appendChild(none);
+          return;
+        }
+        data.accounts.forEach(function (acct) {
+          body.appendChild(renderAccountBlock(acct));
+        });
+      })
+      .catch(function () {
+        body.textContent = '';
+        var err = document.createElement('div');
+        err.className = 'err';
+        err.textContent = 'Network error loading zones.';
+        body.appendChild(err);
+      });
+  }
+
+  document.querySelectorAll('button.zm-expand').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var tokenId = btn.getAttribute('data-token-id');
+      var details = document.getElementById('zm-details-' + tokenId);
+      if (!details) return;
+      var body = details.querySelector('.zm-details-body');
+      var expanded = btn.getAttribute('aria-expanded') === 'true';
+      if (expanded) {
+        details.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        return;
+      }
+      details.hidden = false;
+      btn.setAttribute('aria-expanded', 'true');
+      if (body.getAttribute('data-loaded') === '1') return;
+      body.setAttribute('data-loaded', '1');
+      loadZones(tokenId, body);
+    });
+  });
+}());
+</script>
 
 </body>
 </html>

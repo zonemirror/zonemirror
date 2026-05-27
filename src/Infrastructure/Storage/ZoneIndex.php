@@ -37,7 +37,22 @@ final class ZoneIndex
      * to the index, it always rewrites a token's slice in full so a
      * deleted CF zone disappears immediately on the next refresh.
      *
-     * @param list<array{cf_zone_id: string, name: string, cf_account_id: string}> $zones
+     * Each row also caches the Cloudflare account name (for the WHM
+     * "expand connection" UI — humans recognise "Acme Corp" but not
+     * "1d6a8fb84f9d5278c6ce96051982c04e") and the `permissions` array CF
+     * returns alongside each zone, so the per-zone "DNS edit ok / read-
+     * only" badge in the UI is served from local SQLite instead of
+     * hammering CF on every page open. `probed_at` is bumped to now
+     * since the permissions came in the same response that produced
+     * this slice.
+     *
+     * @param list<array{
+     *     cf_zone_id: string,
+     *     name: string,
+     *     cf_account_id: string,
+     *     cf_account_name?: string,
+     *     permissions?: list<string>,
+     * }> $zones
      */
     public function replaceForToken(string $tokenId, array $zones): void
     {
@@ -51,16 +66,25 @@ final class ZoneIndex
             if ($zones !== []) {
                 $ins = $pdo->prepare(
                     'INSERT OR REPLACE INTO zones
-                     (cf_zone_id, name, cf_account_id, admin_token_id, last_seen_at)
-                     VALUES (?, ?, ?, ?, ?)'
+                     (cf_zone_id, name, cf_account_id, cf_account_name,
+                      admin_token_id, permissions, probed_at, last_seen_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
                 );
                 $now = time();
                 foreach ($zones as $z) {
+                    $perms = $z['permissions'] ?? [];
+                    $permsJson = json_encode(array_values($perms));
+                    if ($permsJson === false) {
+                        $permsJson = '[]';
+                    }
                     $ins->execute([
                         (string) ($z['cf_zone_id'] ?? ''),
                         strtolower((string) ($z['name'] ?? '')),
                         (string) ($z['cf_account_id'] ?? ''),
+                        (string) ($z['cf_account_name'] ?? ''),
                         $tokenId,
+                        $permsJson,
+                        $now,
                         $now,
                     ]);
                 }
@@ -152,22 +176,57 @@ final class ZoneIndex
     }
 
     /**
-     * @return list<array{cf_zone_id: string, name: string, cf_account_id: string, admin_token_id: string}>
+     * @return list<array{
+     *     cf_zone_id: string,
+     *     name: string,
+     *     cf_account_id: string,
+     *     cf_account_name: string,
+     *     admin_token_id: string,
+     *     permissions: list<string>,
+     *     probed_at: int
+     * }>
      */
     public function allForToken(string $tokenId): array
     {
         $pdo = $this->pdo();
         $stmt = $pdo->prepare(
-            'SELECT cf_zone_id, name, cf_account_id, admin_token_id
+            'SELECT cf_zone_id, name, cf_account_id, cf_account_name,
+                    admin_token_id, permissions, probed_at
              FROM zones WHERE admin_token_id = ? ORDER BY name'
         );
         $stmt->execute([$tokenId]);
+        /** @var list<array<string, mixed>> $rows */
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
         if ($rows === false) {
             return [];
         }
 
-        return $rows;
+        $out = [];
+        foreach ($rows as $row) {
+            $permsRaw = (string) ($row['permissions'] ?? '');
+            $perms = [];
+            if ($permsRaw !== '') {
+                $decoded = json_decode($permsRaw, true);
+                if (is_array($decoded)) {
+                    foreach ($decoded as $p) {
+                        if (is_string($p)) {
+                            $perms[] = $p;
+                        }
+                    }
+                }
+            }
+            $out[] = [
+                'cf_zone_id' => (string) $row['cf_zone_id'],
+                'name' => (string) $row['name'],
+                'cf_account_id' => (string) $row['cf_account_id'],
+                'cf_account_name' => (string) ($row['cf_account_name'] ?? ''),
+                'admin_token_id' => (string) $row['admin_token_id'],
+                'permissions' => $perms,
+                'probed_at' => (int) ($row['probed_at'] ?? 0),
+            ];
+        }
+
+        return $out;
     }
 
     private function pdo(): PDO
@@ -205,15 +264,28 @@ final class ZoneIndex
             $pdo->exec('PRAGMA synchronous = NORMAL');
             $pdo->exec(
                 'CREATE TABLE IF NOT EXISTS zones (
-                    cf_zone_id      TEXT PRIMARY KEY,
-                    name            TEXT NOT NULL,
-                    cf_account_id   TEXT NOT NULL DEFAULT "",
-                    admin_token_id  TEXT NOT NULL,
-                    last_seen_at    INTEGER NOT NULL
+                    cf_zone_id       TEXT PRIMARY KEY,
+                    name             TEXT NOT NULL,
+                    cf_account_id    TEXT NOT NULL DEFAULT "",
+                    cf_account_name  TEXT NOT NULL DEFAULT "",
+                    admin_token_id   TEXT NOT NULL,
+                    permissions      TEXT NOT NULL DEFAULT "",
+                    probed_at        INTEGER NOT NULL DEFAULT 0,
+                    last_seen_at     INTEGER NOT NULL
                 )'
             );
             $pdo->exec('CREATE INDEX IF NOT EXISTS zones_by_name ON zones(name)');
             $pdo->exec('CREATE INDEX IF NOT EXISTS zones_by_token ON zones(admin_token_id)');
+
+            // Idempotent column adds for indices that existed before the
+            // v0.3 cache landed. SQLite has no `ADD COLUMN IF NOT EXISTS`,
+            // so we look up the schema once and only issue the ALTER for
+            // columns that are missing. Rows seeded by the old code path
+            // get empty defaults until the next IndexZones sweep
+            // rewrites them with real account names and permissions.
+            $this->addColumnIfMissing($pdo, 'cf_account_name', 'TEXT NOT NULL DEFAULT ""');
+            $this->addColumnIfMissing($pdo, 'permissions', 'TEXT NOT NULL DEFAULT ""');
+            $this->addColumnIfMissing($pdo, 'probed_at', 'INTEGER NOT NULL DEFAULT 0');
 
             if ($newFile) {
                 @chmod($this->path, 0644);
@@ -223,5 +295,21 @@ final class ZoneIndex
         $this->pdo = $pdo;
 
         return $this->pdo;
+    }
+
+    private function addColumnIfMissing(PDO $pdo, string $column, string $columnDef): void
+    {
+        $stmt = $pdo->query('PRAGMA table_info(zones)');
+        if ($stmt === false) {
+            return;
+        }
+        /** @var list<array<string, mixed>> $rows */
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        foreach ($rows as $row) {
+            if ((string) ($row['name'] ?? '') === $column) {
+                return;
+            }
+        }
+        $pdo->exec("ALTER TABLE zones ADD COLUMN $column $columnDef");
     }
 }

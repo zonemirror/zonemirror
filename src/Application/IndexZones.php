@@ -138,13 +138,30 @@ final class IndexZones
                 continue;
             }
             $cfAccountId = '';
+            $cfAccountName = '';
             if (isset($z['account']) && is_array($z['account'])) {
                 $cfAccountId = (string) ($z['account']['id'] ?? '');
+                $cfAccountName = (string) ($z['account']['name'] ?? '');
+            }
+            // Cloudflare returns the per-zone permissions array (e.g.
+            // ["#dns_records:edit", "#zone:read"]) for every entry of
+            // GET /zones. Cache it so the WHM "expand connection" UI can
+            // render the per-zone DNS-edit badge without a follow-up
+            // round-trip on every page open.
+            $perms = [];
+            if (isset($z['permissions']) && is_array($z['permissions'])) {
+                foreach ($z['permissions'] as $p) {
+                    if (is_string($p)) {
+                        $perms[] = $p;
+                    }
+                }
             }
             $rows[] = [
                 'cf_zone_id' => $cfZoneId,
                 'name' => $name,
                 'cf_account_id' => $cfAccountId,
+                'cf_account_name' => $cfAccountName,
+                'permissions' => $perms,
             ];
         }
 
