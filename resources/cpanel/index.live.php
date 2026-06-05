@@ -321,6 +321,25 @@ if ($autoRefresh) {
   }
   .zm-protected-note { color: #2b6cb0; font-size: 0.85rem; }
 
+  .zm-import {
+    margin: 0 0 0.9rem; border: 1px solid #c4dbf2; border-radius: 6px;
+    background: #f6faff;
+  }
+  .zm-import > summary {
+    cursor: pointer; padding: 0.6rem 0.9rem; font-weight: 600; color: #244b73;
+    list-style: none;
+  }
+  .zm-import > summary::-webkit-details-marker { display: none; }
+  .zm-import-body { padding: 0 0.9rem 0.8rem; font-size: 0.9rem; }
+  .zm-import-body p { color: #3a566f; }
+  .zm-import-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .zm-import-table th, .zm-import-table td {
+    text-align: left; padding: 0.3rem 0.5rem; border-bottom: 1px solid #e2ebf5;
+    vertical-align: top;
+  }
+  .zm-import-table th { color: #6a7e92; font-weight: 600; }
+  .zm-import-val { font-family: monospace; word-break: break-all; }
+
   .zm-card-head {
     display: flex; align-items: center; gap: 0.75rem;
     padding: 0.55rem 0.85rem; background: #fafbfc;
@@ -947,6 +966,49 @@ if ($autoRefresh) {
         </div>
       <?php endif; ?>
     <?php endforeach; ?>
+
+    <?php
+    // Import helper. The cloudflare_only rows ARE the records that live in
+    // Cloudflare but not in cPanel; this is the read side of
+    // ImportFromCloudflare surfaced for the operator. ZoneMirror does not
+    // write the cPanel zone itself (cPanel owns /var/named and regenerates
+    // it; the whmapi1 TXT edit path is unreliable on some builds), so we
+    // hand the operator exactly what to add in Zone Editor and a deep link.
+    $cfOnly = $byStatus[DnsDiff::STATUS_CLOUDFLARE_ONLY];
+    if ($cfOnly !== []):
+        $zoneForLink = (string) ($vm['zone_name'] ?? '');
+    ?>
+      <details class="zm-import">
+        <summary>
+          <i class="fas fa-download" aria-hidden="true"></i>
+          Import <?= count($cfOnly) ?> Cloudflare-only record<?= count($cfOnly) === 1 ? '' : 's' ?> into cPanel
+        </summary>
+        <div class="zm-import-body">
+          <p>
+            These records exist in Cloudflare but not in your cPanel zone. To make cPanel
+            the source of truth, add them in
+            <a href="../zone_editor/index.html#/manage?domain=<?= $h(rawurlencode($zoneForLink)) ?>"
+               target="_blank" rel="noopener">cPanel Zone Editor</a>
+            (or your DNS host), then press <strong>Refresh</strong> — they'll move to “No change”.
+            ZoneMirror does not write your zone file for you.
+          </p>
+          <table class="zm-import-table">
+            <thead><tr><th>Type</th><th>Name</th><th>TTL</th><th>Value</th></tr></thead>
+            <tbody>
+            <?php foreach ($cfOnly as $e):
+                $r = is_array($e['remote'] ?? null) ? $e['remote'] : []; ?>
+              <tr>
+                <td><?= $h((string) ($e['type'] ?? '')) ?></td>
+                <td><?= $h((string) ($e['name'] ?? '')) ?></td>
+                <td><?= $h(zm_fmt_ttl((int) ($r['ttl'] ?? 1))) ?></td>
+                <td class="zm-import-val"><?= $h(zm_format_record($r)) ?></td>
+              </tr>
+            <?php endforeach; ?>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    <?php endif; ?>
 
     <div class="zm-summary">
       <div class="card miss-l">
