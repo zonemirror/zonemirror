@@ -17,6 +17,11 @@ use ZoneMirror\Domain\RecordType;
  */
 final class RecordMatcher
 {
+    public function __construct(
+        private readonly TxtContentNormalizer $txt = new TxtContentNormalizer(),
+    ) {
+    }
+
     /**
      * @param list<array<string, mixed>> $existing
      * @return array<string, mixed>|null
@@ -64,7 +69,8 @@ final class RecordMatcher
         $candidateContent = isset($candidate['content']) ? (string) $candidate['content'] : '';
         $localContent = $record->content ?? '';
         if ($record->type === RecordType::TXT) {
-            return $this->normalizeTxt($candidateContent) === $this->normalizeTxt($localContent);
+            return $this->txt->canonicalForCompare($candidateContent)
+                === $this->txt->canonicalForCompare($localContent);
         }
 
         return $candidateContent === $localContent;
@@ -83,14 +89,5 @@ final class RecordMatcher
         }
 
         return true;
-    }
-
-    private function normalizeTxt(string $value): string
-    {
-        if (strlen($value) >= 2 && str_starts_with($value, '"') && str_ends_with($value, '"')) {
-            return substr($value, 1, -1);
-        }
-
-        return $value;
     }
 }
