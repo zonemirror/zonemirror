@@ -25,7 +25,8 @@ final class BindZoneWriterTest extends TestCase
     {
         putenv(Paths::ENV_BIND_DIR . '=');
         if (is_dir($this->tmpDir)) {
-            foreach (glob($this->tmpDir . '/*') ?: [] as $f) {
+            $entries = glob($this->tmpDir . '/*');
+            foreach ($entries === false ? [] : $entries as $f) {
                 @unlink($f);
             }
             @rmdir($this->tmpDir);
