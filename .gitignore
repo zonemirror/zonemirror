@@ -23,6 +23,7 @@ package-lock.json
 
 # Runtime
 /var/
+/error_log
 *.log
 
 # Release artifacts

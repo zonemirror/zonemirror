@@ -144,7 +144,11 @@ final class WorkerLoop
                 $zoneTokens = [];
                 foreach ($enabledZones as $zone) {
                     $plainToken = $this->resolveTokenFor(
-                        $user, $userCfg, $zone, $adminTokens, $zoneIndex,
+                        $user,
+                        $userCfg,
+                        $zone,
+                        $adminTokens,
+                        $zoneIndex,
                     );
                     if ($plainToken === '') {
                         continue;
@@ -226,6 +230,7 @@ final class WorkerLoop
 
                     if (!isset($clientByZone[$zoneId])) {
                         $clientByZone[$zoneId] = new CloudflareApiClient($zoneTokens[$zoneId]);
+
                         try {
                             $snapshotByZone[$zoneId] = new ZoneSnapshot($clientByZone[$zoneId]->listRecords($zoneId));
                         } catch (\Throwable $e) {

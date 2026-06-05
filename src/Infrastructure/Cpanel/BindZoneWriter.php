@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace ZoneMirror\Infrastructure\Cpanel;
 
-use RuntimeException;
 use ZoneMirror\Infrastructure\Storage\Paths;
 
 /**

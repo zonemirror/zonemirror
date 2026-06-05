@@ -92,13 +92,13 @@ function cmd_status(SystemConfigStorage $systemStorage, LocalRewriteState $state
         return;
     }
     echo "Local DMARC rewrite status\n";
-    echo "  feature enabled       : ", $local['enabled'] ? 'yes' : 'no', "\n";
-    echo "  template              : ", $template !== '' ? $template : '(none — set it in WHM > ZoneMirror)', "\n";
-    echo "  overwrite custom rua  : ", $local['overwrite_custom_rua'] ? 'yes' : 'no', "\n";
-    echo "  respect has_custom    : ", $local['respect_has_custom_dmarc'] ? 'yes' : 'no', "\n";
-    echo "  respect user locks    : ", $local['respect_user_locks'] ? 'yes' : 'no', "\n";
-    echo "  excluded zones        : ", count($local['exclude_zones']) === 0 ? '(none)' : implode(', ', $local['exclude_zones']), "\n";
-    echo "  tracked zones / recs  : ", $state->countZones(), ' zones / ', $state->countRecords(), " records\n";
+    echo '  feature enabled       : ', $local['enabled'] ? 'yes' : 'no', "\n";
+    echo '  template              : ', $template !== '' ? $template : '(none — set it in WHM > ZoneMirror)', "\n";
+    echo '  overwrite custom rua  : ', $local['overwrite_custom_rua'] ? 'yes' : 'no', "\n";
+    echo '  respect has_custom    : ', $local['respect_has_custom_dmarc'] ? 'yes' : 'no', "\n";
+    echo '  respect user locks    : ', $local['respect_user_locks'] ? 'yes' : 'no', "\n";
+    echo '  excluded zones        : ', count($local['exclude_zones']) === 0 ? '(none)' : implode(', ', $local['exclude_zones']), "\n";
+    echo '  tracked zones / recs  : ', $state->countZones(), ' zones / ', $state->countRecords(), " records\n";
 }
 
 function cmd_preview(ApplyLocalDmarc $apply, bool $json): void
@@ -167,7 +167,7 @@ function cmd_revert(ApplyLocalDmarc $apply, LocalRewriteState $state, bool $assu
             $state->countRecords(),
             $state->countZones(),
         );
-        echo "Proceed? [y/N] ";
+        echo 'Proceed? [y/N] ';
         $resp = trim((string) fgets(STDIN));
         if (strtolower($resp) !== 'y' && strtolower($resp) !== 'yes') {
             echo "Aborted.\n";
@@ -183,10 +183,10 @@ function cmd_revert(ApplyLocalDmarc $apply, LocalRewriteState $state, bool $assu
     }
     foreach ($result['records'] as $r) {
         $line = sprintf(
-            "  %-45s %-15s %s",
+            '  %-45s %-15s %s',
             $r['zone'],
             $r['owner'],
-            $r['error'] === null ? 'reverted (reload=' . ($r['reload_method'] ?: 'n/a') . ')' : 'ERROR: ' . $r['error'],
+            $r['error'] === null ? 'reverted (reload=' . ($r['reload_method'] !== '' ? $r['reload_method'] : 'n/a') . ')' : 'ERROR: ' . $r['error'],
         );
         echo $line, "\n";
     }
@@ -203,7 +203,7 @@ function cmd_toggle(SystemConfigStorage $systemStorage, bool $on): void
     $cfg = $systemStorage->load();
     $cfg['local_rewrite']['enabled'] = $on;
     $systemStorage->save($cfg);
-    echo "local_rewrite.enabled = ", $on ? 'true' : 'false', "\n";
+    echo 'local_rewrite.enabled = ', $on ? 'true' : 'false', "\n";
 }
 
 /**
@@ -212,7 +212,7 @@ function cmd_toggle(SystemConfigStorage $systemStorage, bool $on): void
 function render_plan_table(array $plan, bool $applied): void
 {
     $tpl = (string) ($plan['template'] ?? '');
-    echo "Template: ", $tpl !== '' ? $tpl : '(no template set)', "\n\n";
+    echo 'Template: ', $tpl !== '' ? $tpl : '(no template set)', "\n\n";
     if (!isset($plan['zones']) || !is_array($plan['zones']) || $plan['zones'] === []) {
         echo "No zones discovered under /var/named.\n";
 
@@ -227,7 +227,7 @@ function render_plan_table(array $plan, bool $applied): void
     echo sprintf("  %-40s %-14s %-22s %s\n", str_repeat('-', 40), str_repeat('-', 14), str_repeat('-', 22), str_repeat('-', 20));
     foreach ($plan['zones'] as $row) {
         if (($row['zone'] ?? '') === '*') {
-            echo "  (global) ", $row['reason'] ?? '', "\n";
+            echo '  (global) ', $row['reason'] ?? '', "\n";
 
             continue;
         }
