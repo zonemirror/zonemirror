@@ -913,6 +913,7 @@ final class UserController
         $cfg = $this->storageFor($user)->load($user);
         $zones = [];
         $queue = null;
+
         try {
             $queue = new SqliteQueue($user);
         } catch (\Throwable) {

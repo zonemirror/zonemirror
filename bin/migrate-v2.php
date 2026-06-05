@@ -27,12 +27,12 @@ declare(strict_types=1);
  * and chowns files back to the user after writes.
  */
 
+use ZoneMirror\Infrastructure\Queue\SqliteQueue;
 use ZoneMirror\Infrastructure\Storage\ConfigCrypto;
 use ZoneMirror\Infrastructure\Storage\EnrolledUsers;
 use ZoneMirror\Infrastructure\Storage\KeyStore;
 use ZoneMirror\Infrastructure\Storage\Paths;
 use ZoneMirror\Infrastructure\Storage\UserConfigStorage;
-use ZoneMirror\Infrastructure\Queue\SqliteQueue;
 
 $autoload = __DIR__ . '/../vendor/autoload.php';
 if (!is_file($autoload)) {
@@ -68,7 +68,7 @@ foreach ($users as $user) {
         } else {
             $skipped++;
         }
-    } catch (\Throwable $e) {
+    } catch (Throwable $e) {
         $errors[] = ['user' => $user, 'msg' => $e->getMessage()];
         fwrite(STDERR, sprintf("[error] %s: %s\n", $user, $e->getMessage()));
     }
@@ -189,7 +189,7 @@ function migrate_user(string $user, bool $verbose): string
             if ($backfilled > 0) {
                 $changes[] = "queue (+{$backfilled})";
             }
-        } catch (\Throwable $e) {
+        } catch (Throwable $e) {
             if ($verbose) {
                 fwrite(STDERR, "[warn] {$user}: queue migration skipped: " . $e->getMessage() . "\n");
             }
