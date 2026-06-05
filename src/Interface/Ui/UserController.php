@@ -566,6 +566,12 @@ final class UserController
         $bulkStatus = (string) ($post['apply_status'] ?? '');
         if ($bulkStatus !== '') {
             foreach ($byKey as $key => $e) {
+                // Email-auth / verification rows are kept out of every bulk
+                // action; only an explicit per-row tick (push_keys/delete_keys)
+                // can touch them.
+                if (($e['protected'] ?? false) === true) {
+                    continue;
+                }
                 $status = (string) ($e['status'] ?? '');
                 if ($bulkStatus === 'all') {
                     if ($status === 'different' || $status === 'cpanel_only') {

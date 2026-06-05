@@ -86,6 +86,8 @@ final class DnsDiffEntryTest extends TestCase
             'status' => 'different',
             'type' => 'A',
             'name' => 'example.com',
+            'protected' => false,
+            'protect_reason' => '',
             'local' => $local->toCloudflarePayload(),
             'remote' => [
                 'id' => 'cf-id-1',
@@ -269,7 +271,7 @@ final class DnsDiffEntryTest extends TestCase
         );
 
         self::assertSame(
-            ['key', 'status', 'type', 'name', 'local', 'remote'],
+            ['key', 'status', 'type', 'name', 'protected', 'protect_reason', 'local', 'remote'],
             array_keys($entry->toArray()),
         );
     }

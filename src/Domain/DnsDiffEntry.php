@@ -32,6 +32,14 @@ final class DnsDiffEntry
         public readonly ?DnsRecord $local,
         /** @var array<string, mixed>|null */
         public readonly ?array $remote,
+        /**
+         * True for email-authentication / verification rows (SPF, DKIM,
+         * DMARC, MX, *-verification) that the UI must keep out of every bulk
+         * action so a careless "Delete all CF-only" / "Update all" can't take
+         * out the domain's mail. A deliberate per-row tick still applies.
+         */
+        public readonly bool $protected = false,
+        public readonly string $protectReason = '',
     ) {
     }
 
@@ -45,6 +53,8 @@ final class DnsDiffEntry
             'status' => $this->status,
             'type' => $this->type,
             'name' => $this->name,
+            'protected' => $this->protected,
+            'protect_reason' => $this->protectReason,
             'local' => $this->local?->toCloudflarePayload(),
             'remote' => $this->remote === null
                 ? null
