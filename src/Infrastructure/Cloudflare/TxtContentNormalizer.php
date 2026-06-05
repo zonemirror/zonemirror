@@ -111,6 +111,19 @@ final class TxtContentNormalizer
     {
         $bare = $this->canonical($content);
 
+        if (stripos($bare, 'v=dmarc1') === 0) {
+            // DMARC is a `tag=value;`-separated list; the trailing `;` and the
+            // spacing around separators carry no meaning. Normalise them so a
+            // template ending `…ruf=x` compares equal to cPanel/Cloudflare's
+            // `…ruf=x;`.
+            $parts = array_values(array_filter(
+                array_map('trim', explode(';', $bare)),
+                static fn (string $p): bool => $p !== '',
+            ));
+
+            return implode('; ', $parts);
+        }
+
         if (stripos($bare, 'v=spf1') !== 0) {
             return $bare;
         }

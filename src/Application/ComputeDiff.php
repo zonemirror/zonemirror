@@ -85,6 +85,11 @@ final class ComputeDiff
                 fn (DnsRecord $r): DnsRecord => $this->normalizer->normalize($r, $zoneName, $policy),
                 $localRecords,
             );
+            // Synthesize the central DMARC template for zones that have no
+            // _dmarc of their own. Otherwise ZoneMirror's own managed DMARC
+            // (already on Cloudflare) looks orphaned and the diff offers to
+            // DELETE it — the opposite of what the template is for.
+            $localRecords = $this->normalizer->ensureDmarc($localRecords, $zoneName, $policy);
         }
 
         // When the WHM admin opts in to "Auto TTL" (default), rewrite the

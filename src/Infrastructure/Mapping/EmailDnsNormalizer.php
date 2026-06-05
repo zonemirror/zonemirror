@@ -67,6 +67,50 @@ final class EmailDnsNormalizer
         return $record;
     }
 
+    /**
+     * Append the central DMARC template as a synthesized local record when
+     * the admin configured one and the zone has no `_dmarc` of its own.
+     *
+     * Older zones (or ones whose DMARC was only ever set directly in
+     * Cloudflare) carry no `_dmarc` in /var/named, so {@see normalize()} —
+     * which only rewrites an EXISTING `_dmarc` — leaves the local side
+     * without one. The diff then sees ZoneMirror's own managed DMARC on
+     * Cloudflare as an orphan and offers to delete it. Synthesizing the
+     * template here makes the record pair with Cloudflare (No change) or be
+     * created where Cloudflare lacks it, which is the whole point of the
+     * "central DMARC inbox" policy.
+     *
+     * @param list<DnsRecord> $records
+     * @param array{dmarc_template?: string, spf_extras?: list<string>} $policy
+     * @return list<DnsRecord>
+     */
+    public function ensureDmarc(array $records, string $zoneName, array $policy): array
+    {
+        $template = trim((string) ($policy['dmarc_template'] ?? ''));
+        if ($template === '') {
+            return $records;
+        }
+        $zone = strtolower(rtrim($zoneName, '.'));
+        $dmarcName = '_dmarc.' . $zone;
+        foreach ($records as $r) {
+            if ($r->type === RecordType::TXT && strtolower(rtrim($r->name, '.')) === $dmarcName) {
+                return $records;
+            }
+        }
+
+        $records[] = new DnsRecord(
+            type: RecordType::TXT,
+            name: $dmarcName,
+            content: $this->renderTemplate($template, $zone),
+            ttl: 1,
+            priority: null,
+            proxied: null,
+            data: [],
+        );
+
+        return $records;
+    }
+
     private function withContent(DnsRecord $record, string $content): DnsRecord
     {
         return new DnsRecord(

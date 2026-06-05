@@ -217,4 +217,42 @@ final class EmailDnsNormalizerTest extends TestCase
 
         self::assertSame('arbitrary verification token', $out->content);
     }
+
+    public function testEnsureDmarcSynthesizesWhenZoneHasNone(): void
+    {
+        $records = [
+            new DnsRecord(RecordType::TXT, 'example.com', 'v=spf1 ~all', 14400, null, null, []),
+        ];
+
+        $out = $this->normalizer->ensureDmarc($records, 'example.com', [
+            'dmarc_template' => 'v=DMARC1; p=none; rua=mailto:ops@host.tld',
+        ]);
+
+        self::assertCount(2, $out);
+        $dmarc = $out[1];
+        self::assertSame('_dmarc.example.com', $dmarc->name);
+        self::assertSame('v=DMARC1; p=none; rua=mailto:ops@host.tld', $dmarc->content);
+    }
+
+    public function testEnsureDmarcDoesNotDuplicateExistingDmarc(): void
+    {
+        $records = [
+            new DnsRecord(RecordType::TXT, '_dmarc.example.com', 'v=DMARC1; p=reject', 14400, null, null, []),
+        ];
+
+        $out = $this->normalizer->ensureDmarc($records, 'example.com', [
+            'dmarc_template' => 'v=DMARC1; p=none; rua=mailto:ops@host.tld',
+        ]);
+
+        self::assertSame($records, $out);
+    }
+
+    public function testEnsureDmarcNoopWithoutTemplate(): void
+    {
+        $records = [
+            new DnsRecord(RecordType::TXT, 'example.com', 'v=spf1 ~all', 14400, null, null, []),
+        ];
+
+        self::assertSame($records, $this->normalizer->ensureDmarc($records, 'example.com', []));
+    }
 }

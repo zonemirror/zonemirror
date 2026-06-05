@@ -116,4 +116,22 @@ final class TxtContentNormalizerTest extends TestCase
             $this->txt->identity('v=spf1 ~all'),
         );
     }
+
+    public function testDmarcTrailingSemicolonIsIgnoredForEquality(): void
+    {
+        // The synthesized template ends without a trailing `;`; cPanel and
+        // Cloudflare store one. They must still compare equal (No change).
+        self::assertSame(
+            $this->txt->canonicalForCompare('v=DMARC1; p=none; rua=mailto:a@b.com; ruf=mailto:a@b.com'),
+            $this->txt->canonicalForCompare('"v=DMARC1; p=none; rua=mailto:a@b.com; ruf=mailto:a@b.com;"'),
+        );
+    }
+
+    public function testDmarcSeparatorSpacingIsNormalised(): void
+    {
+        self::assertSame(
+            $this->txt->canonicalForCompare('v=DMARC1;p=none;rua=mailto:a@b.com'),
+            $this->txt->canonicalForCompare('v=DMARC1; p=none; rua=mailto:a@b.com'),
+        );
+    }
 }
