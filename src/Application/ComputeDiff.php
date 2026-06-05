@@ -155,12 +155,19 @@ final class ComputeDiff
             $remoteByKey[$this->keyForRemote($r)][] = $r;
         }
 
+        // Resolve delegation once: if the zone's authoritative NS are
+        // Cloudflare, cPanel is NOT the source of truth and EVERY
+        // Cloudflare-only record (not just the email-auth ones) is live data
+        // that a cPanel → Cloudflare sync would wrongly delete. Thread it into
+        // the pairing so those rows come out protected from bulk actions.
+        $cfDelegated = $this->nsIsCloudflare($zoneName);
+
         $entries = [];
         $allKeys = array_keys($localByKey + $remoteByKey);
         foreach ($allKeys as $key) {
             $locals  = $localByKey[$key]  ?? [];
             $remotes = $remoteByKey[$key] ?? [];
-            $entries = array_merge($entries, $this->pairBucket($key, $locals, $remotes));
+            $entries = array_merge($entries, $this->pairBucket($key, $locals, $remotes, $cfDelegated));
         }
 
         usort($entries, static function (DnsDiffEntry $a, DnsDiffEntry $b): int {
@@ -190,22 +197,23 @@ final class ComputeDiff
             zoneId: $zoneId,
             computedAt: time(),
             entries: $entries,
-            advisories: $this->buildAdvisories($zoneName, $entries),
+            advisories: $this->buildAdvisories($entries, $cfDelegated),
         );
     }
 
     /**
-     * Zone-level notices for the review banner. Fires when email-auth records
-     * (SPF/DKIM/DMARC/MX/verification) live only in Cloudflare and not in the
-     * cPanel zone — the tell-tale of a Cloudflare-delegated domain whose live
-     * records were managed in the dashboard while the local /var/named copy
-     * fell behind. The message is enriched when the domain's authoritative NS
-     * are in fact Cloudflare.
+     * Zone-level notices for the review banner. Fires when protected records
+     * live only in Cloudflare. For a Cloudflare-delegated zone (authoritative
+     * NS are Cloudflare) that is every Cloudflare-only record — Cloudflare is
+     * the source of truth and a cPanel → Cloudflare sync would wrongly delete
+     * live data. For a non-delegated zone it is the email-auth subset
+     * (SPF/DKIM/DMARC/MX/verification) that was managed straight in the
+     * dashboard while the local /var/named copy fell behind.
      *
      * @param list<DnsDiffEntry> $entries
      * @return list<array{level: string, code: string, message: string}>
      */
-    private function buildAdvisories(string $zoneName, array $entries): array
+    private function buildAdvisories(array $entries, bool $cfDelegated): array
     {
         $protectedCfOnly = 0;
         foreach ($entries as $e) {
@@ -217,22 +225,34 @@ final class ComputeDiff
             return [];
         }
 
-        $cf = $this->nsIsCloudflare($zoneName);
-        $message = sprintf(
-            '%d email-authentication record%s (SPF / DKIM / DMARC / MX / verification) '
-            . 'exist only in Cloudflare, not in your cPanel zone%s. They are protected '
-            . 'from bulk Delete and Update so a careless apply cannot break this domain\'s '
-            . 'mail — review and tick each one individually if you really want to remove it. '
-            . 'If Cloudflare is the source of truth here, import these records into cPanel '
-            . 'rather than syncing cPanel → Cloudflare.',
-            $protectedCfOnly,
-            $protectedCfOnly === 1 ? '' : 's',
-            $cf ? ', whose authoritative nameservers are Cloudflare' : '',
-        );
+        if ($cfDelegated) {
+            $message = sprintf(
+                'This zone\'s authoritative nameservers are Cloudflare, so Cloudflare — '
+                . 'not cPanel — is the source of truth here. %d record%s exist only in '
+                . 'Cloudflare (mail authentication, autodiscovery, app hosts and the like) '
+                . 'and are protected from bulk Delete and Update so a careless cPanel → '
+                . 'Cloudflare sync cannot wipe them. Import them into cPanel rather than '
+                . 'deleting them from Cloudflare; tick one individually only if you really '
+                . 'mean to remove it.',
+                $protectedCfOnly,
+                $protectedCfOnly === 1 ? '' : 's',
+            );
+        } else {
+            $message = sprintf(
+                '%d email-authentication record%s (SPF / DKIM / DMARC / MX / verification) '
+                . 'exist only in Cloudflare, not in your cPanel zone. They are protected '
+                . 'from bulk Delete and Update so a careless apply cannot break this '
+                . 'domain\'s mail — review and tick each one individually if you really '
+                . 'want to remove it. If Cloudflare is the source of truth here, import '
+                . 'these records into cPanel rather than syncing cPanel → Cloudflare.',
+                $protectedCfOnly,
+                $protectedCfOnly === 1 ? '' : 's',
+            );
+        }
 
         return [[
             'level' => 'warning',
-            'code' => 'cf_managed_email_auth',
+            'code' => $cfDelegated ? 'cf_delegated_zone' : 'cf_managed_email_auth',
             'message' => $message,
         ]];
     }
@@ -280,7 +300,7 @@ final class ComputeDiff
      * @param list<array<string, mixed>>  $remotes
      * @return list<DnsDiffEntry>
      */
-    private function pairBucket(string $key, array $locals, array $remotes): array
+    private function pairBucket(string $key, array $locals, array $remotes, bool $cfDelegated = false): array
     {
         // Fast path for the common 1:1 case — keep the bare key so the
         // UI's "Update" affordance stays visually compact.
@@ -390,6 +410,13 @@ final class ComputeDiff
                 continue;
             }
             $reason = $this->protectReason(null, $remote);
+            if ($reason === '' && $cfDelegated) {
+                // Delegated zone: cPanel is not authoritative, so this live
+                // Cloudflare record is not stray cruft to delete — shield it
+                // from bulk actions and let the banner steer the user to
+                // import instead.
+                $reason = 'only in Cloudflare (delegated zone)';
+            }
             $out[] = new DnsDiffEntry(
                 key: $this->entryKey($key, null, $remote, $multi),
                 status: DnsDiff::STATUS_CLOUDFLARE_ONLY,
