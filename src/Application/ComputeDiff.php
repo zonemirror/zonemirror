@@ -9,6 +9,7 @@ use ZoneMirror\Domain\DnsDiffEntry;
 use ZoneMirror\Domain\DnsRecord;
 use ZoneMirror\Domain\RecordType;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Infrastructure\Cloudflare\EmailAuthClassifier;
 use ZoneMirror\Infrastructure\Cloudflare\TxtContentNormalizer;
 use ZoneMirror\Infrastructure\Cpanel\BindZoneParser;
 use ZoneMirror\Infrastructure\Logging\FileLogger;
@@ -52,6 +53,7 @@ final class ComputeDiff
         private readonly EmailDnsNormalizer $normalizer = new EmailDnsNormalizer(),
         private readonly SystemConfigStorage $systemConfig = new SystemConfigStorage(),
         private readonly TxtContentNormalizer $txt = new TxtContentNormalizer(),
+        private readonly EmailAuthClassifier $emailAuth = new EmailAuthClassifier(),
     ) {
     }
 
@@ -188,7 +190,70 @@ final class ComputeDiff
             zoneId: $zoneId,
             computedAt: time(),
             entries: $entries,
+            advisories: $this->buildAdvisories($zoneName, $entries),
         );
+    }
+
+    /**
+     * Zone-level notices for the review banner. Fires when email-auth records
+     * (SPF/DKIM/DMARC/MX/verification) live only in Cloudflare and not in the
+     * cPanel zone — the tell-tale of a Cloudflare-delegated domain whose live
+     * records were managed in the dashboard while the local /var/named copy
+     * fell behind. The message is enriched when the domain's authoritative NS
+     * are in fact Cloudflare.
+     *
+     * @param list<DnsDiffEntry> $entries
+     * @return list<array{level: string, code: string, message: string}>
+     */
+    private function buildAdvisories(string $zoneName, array $entries): array
+    {
+        $protectedCfOnly = 0;
+        foreach ($entries as $e) {
+            if ($e->protected && $e->status === DnsDiff::STATUS_CLOUDFLARE_ONLY) {
+                $protectedCfOnly++;
+            }
+        }
+        if ($protectedCfOnly === 0) {
+            return [];
+        }
+
+        $cf = $this->nsIsCloudflare($zoneName);
+        $message = sprintf(
+            '%d email-authentication record%s (SPF / DKIM / DMARC / MX / verification) '
+            . 'exist only in Cloudflare, not in your cPanel zone%s. They are protected '
+            . 'from bulk Delete and Update so a careless apply cannot break this domain\'s '
+            . 'mail — review and tick each one individually if you really want to remove it. '
+            . 'If Cloudflare is the source of truth here, import these records into cPanel '
+            . 'rather than syncing cPanel → Cloudflare.',
+            $protectedCfOnly,
+            $protectedCfOnly === 1 ? '' : 's',
+            $cf ? ', whose authoritative nameservers are Cloudflare' : '',
+        );
+
+        return [[
+            'level' => 'warning',
+            'code' => 'cf_managed_email_auth',
+            'message' => $message,
+        ]];
+    }
+
+    private function nsIsCloudflare(string $zoneName): bool
+    {
+        $zone = rtrim(strtolower(trim($zoneName)), '.');
+        if ($zone === '') {
+            return false;
+        }
+        $records = @dns_get_record($zone, DNS_NS);
+        if (!is_array($records)) {
+            return false;
+        }
+        foreach ($records as $r) {
+            if (str_contains(strtolower((string) ($r['target'] ?? '')), 'cloudflare')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -222,16 +287,20 @@ final class ComputeDiff
         if (count($locals) === 1 && count($remotes) === 1) {
             $local  = $locals[0];
             $remote = $remotes[0];
+            $isMatch = $this->recordsMatch($local, $remote);
+            $reason = $isMatch ? '' : $this->protectReason($local, $remote);
 
             return [new DnsDiffEntry(
                 key: $key,
-                status: $this->recordsMatch($local, $remote)
+                status: $isMatch
                     ? DnsDiff::STATUS_IDENTICAL
                     : DnsDiff::STATUS_DIFFERENT,
                 type: $local->type->value,
                 name: $local->name,
                 local: $local,
                 remote: $remote,
+                protected: $reason !== '',
+                protectReason: $reason,
             )];
         }
 
@@ -291,6 +360,7 @@ final class ComputeDiff
                 break;
             }
             if ($pairedRemote !== null) {
+                $reason = $this->protectReason($local, $pairedRemote);
                 $out[] = new DnsDiffEntry(
                     key: $this->entryKey($key, $local, $pairedRemote, $multi),
                     status: DnsDiff::STATUS_DIFFERENT,
@@ -298,6 +368,8 @@ final class ComputeDiff
                     name: $local->name,
                     local: $local,
                     remote: $pairedRemote,
+                    protected: $reason !== '',
+                    protectReason: $reason,
                 );
             } else {
                 $out[] = new DnsDiffEntry(
@@ -317,6 +389,7 @@ final class ComputeDiff
             if (isset($remoteUsed[$ri])) {
                 continue;
             }
+            $reason = $this->protectReason(null, $remote);
             $out[] = new DnsDiffEntry(
                 key: $this->entryKey($key, null, $remote, $multi),
                 status: DnsDiff::STATUS_CLOUDFLARE_ONLY,
@@ -324,6 +397,8 @@ final class ComputeDiff
                 name: (string) ($remote['name'] ?? ''),
                 local: null,
                 remote: $remote,
+                protected: $reason !== '',
+                protectReason: $reason,
             );
         }
 
@@ -388,6 +463,37 @@ final class ComputeDiff
             isset($r['priority']) ? (int) $r['priority'] : null,
             is_array($r['data'] ?? null) ? $r['data'] : [],
         );
+    }
+
+    /**
+     * The protection reason for a row (empty string = not protected). A row
+     * is protected when either side is an email-authentication / verification
+     * record, so the UI keeps it out of bulk Delete/Update. Used only for
+     * `different` and `cloudflare_only` rows — creating a record is never
+     * destructive, so cpanel_only rows are never protected.
+     *
+     * @param array<string, mixed>|null $remote
+     */
+    private function protectReason(?DnsRecord $local, ?array $remote): string
+    {
+        if ($local !== null) {
+            $r = $this->emailAuth->protectReason($local->type->value, $local->name, $local->content);
+            if ($r !== null) {
+                return $r;
+            }
+        }
+        if ($remote !== null) {
+            $r = $this->emailAuth->protectReason(
+                (string) ($remote['type'] ?? ''),
+                (string) ($remote['name'] ?? ''),
+                isset($remote['content']) ? (string) $remote['content'] : null,
+            );
+            if ($r !== null) {
+                return $r;
+            }
+        }
+
+        return '';
     }
 
     /**

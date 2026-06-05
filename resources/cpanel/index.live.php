@@ -302,6 +302,24 @@ if ($autoRefresh) {
   .zm-card.status-cpanel_only   { border-left-color: #1f8a3e; }
   .zm-card.status-cloudflare_only { border-left-color: #c53030; }
   .zm-card.status-identical     { border-left-color: #ccc; opacity: 0.75; }
+  .zm-card[data-protected="1"]  { box-shadow: inset 3px 0 0 #2b6cb0; }
+
+  .zm-advisory {
+    display: flex; align-items: flex-start; gap: 0.6rem;
+    margin: 0.6rem 0 0.9rem; padding: 0.7rem 0.9rem; border-radius: 6px;
+    font-size: 0.92rem; line-height: 1.45;
+  }
+  .zm-advisory .fa-shield-alt { margin-top: 0.15rem; }
+  .zm-advisory-warning { background: #fbf6e7; border: 1px solid #e6cf7a; color: #6b551b; }
+  .zm-advisory-info    { background: #eef4fb; border: 1px solid #b9d2ec; color: #244b73; }
+
+  .zm-protected {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.74rem; font-weight: 600; color: #2b6cb0;
+    background: #eaf2fb; border: 1px solid #c4dbf2; border-radius: 10px;
+    padding: 0.05rem 0.5rem; white-space: nowrap;
+  }
+  .zm-protected-note { color: #2b6cb0; font-size: 0.85rem; }
 
   .zm-card-head {
     display: flex; align-items: center; gap: 0.75rem;
@@ -885,6 +903,30 @@ if ($autoRefresh) {
     $cUpdate = count($byStatus[DnsDiff::STATUS_DIFFERENT]);
     $cDelete = count($byStatus[DnsDiff::STATUS_CLOUDFLARE_ONLY]);
     $cIdent  = count($byStatus[DnsDiff::STATUS_IDENTICAL]);
+    // Email-auth / verification rows are excluded from every bulk action, so
+    // the "Select all" affordance reflects only what it will actually tick.
+    $cProtected = 0;
+    foreach ($entries as $e) {
+        if (is_array($e) && !empty($e['protected'])) {
+            $cProtected++;
+        }
+    }
+    $cBulk = max(0, $cCreate + $cUpdate + $cDelete - $cProtected);
+    $pUpdate = 0;
+    foreach ($byStatus[DnsDiff::STATUS_DIFFERENT] as $e) {
+        if (!empty($e['protected'])) {
+            $pUpdate++;
+        }
+    }
+    $pDelete = 0;
+    foreach ($byStatus[DnsDiff::STATUS_CLOUDFLARE_ONLY] as $e) {
+        if (!empty($e['protected'])) {
+            $pDelete++;
+        }
+    }
+    $cUpdateBulk = max(0, $cUpdate - $pUpdate);
+    $cDeleteBulk = max(0, $cDelete - $pDelete);
+    $advisories = is_array($vm['diff']['advisories'] ?? null) ? $vm['diff']['advisories'] : [];
     ?>
 
     <div class="zm-step">Step 2 of 2 — Review</div>
@@ -896,6 +938,15 @@ if ($autoRefresh) {
         <span style="color:#aaa;">&nbsp;Computed <?= $h(gmdate('Y-m-d H:i \U\T\C', $computedAt)) ?>.</span>
       <?php endif; ?>
     </p>
+
+    <?php foreach ($advisories as $adv): ?>
+      <?php if (is_array($adv) && ($adv['message'] ?? '') !== ''): ?>
+        <div class="zm-advisory zm-advisory-<?= $h((string) ($adv['level'] ?? 'warning')) ?>" role="alert">
+          <i class="fas fa-shield-alt" aria-hidden="true"></i>
+          <span><?= $h((string) $adv['message']) ?></span>
+        </div>
+      <?php endif; ?>
+    <?php endforeach; ?>
 
     <div class="zm-summary">
       <div class="card miss-l">
@@ -928,7 +979,13 @@ if ($autoRefresh) {
     <div class="zm-select-row">
       <span class="zm-select-label">Selection:</span>
       <button type="button" class="zm-link" data-select="visible">Select shown</button>
-      <button type="button" class="zm-link" data-select="all">Select all (<?= $cCreate + $cUpdate + $cDelete ?>)</button>
+      <button type="button" class="zm-link" data-select="all">Select all (<?= $cBulk ?>)</button>
+      <?php if ($cProtected > 0): ?>
+        <span class="zm-select-sep">|</span>
+        <span class="zm-protected-note" title="Email-auth rows (SPF/DKIM/DMARC/MX/verification) are excluded from bulk actions; tick one individually to act on it.">
+          <i class="fas fa-shield-alt" aria-hidden="true"></i> <?= $cProtected ?> protected
+        </span>
+      <?php endif; ?>
       <button type="button" class="zm-link" data-select="cpanel_only">Creates only</button>
       <button type="button" class="zm-link" data-select="different">Updates only</button>
       <button type="button" class="zm-link" data-select="cloudflare_only">Deletes only</button>
@@ -976,21 +1033,21 @@ if ($autoRefresh) {
                   Create all <?= $cCreate ?> missing on CF
                 </button>
               <?php endif; ?>
-              <?php if ($cUpdate > 0): ?>
+              <?php if ($cUpdateBulk > 0): ?>
                 <button type="submit" name="apply_status" value="different" class="btn btn-default"
                         data-zm-confirm-title="Overwrite on Cloudflare"
-                        data-zm-confirm-msg="Overwrite <?= $cUpdate ?> Cloudflare record(s) with the cPanel version?">
-                  Update all <?= $cUpdate ?> differing
+                        data-zm-confirm-msg="Overwrite <?= $cUpdateBulk ?> Cloudflare record(s) with the cPanel version?">
+                  Update all <?= $cUpdateBulk ?> differing
                 </button>
               <?php endif; ?>
-              <?php if ($cDelete > 0): ?>
+              <?php if ($cDeleteBulk > 0): ?>
                 <button type="submit" name="apply_status" value="cloudflare_only" class="btn btn-default"
                         data-zm-confirm-title="Delete from Cloudflare"
-                        data-zm-confirm-msg="DELETE <?= $cDelete ?> record(s) from Cloudflare that do not exist on cPanel? This is destructive.">
-                  Delete all <?= $cDelete ?> CF-only
+                        data-zm-confirm-msg="DELETE <?= $cDeleteBulk ?> record(s) from Cloudflare that do not exist on cPanel? This is destructive.">
+                  Delete all <?= $cDeleteBulk ?> CF-only
                 </button>
               <?php endif; ?>
-              <?php if ($cCreate + $cUpdate > 0): ?>
+              <?php if ($cCreate + $cUpdateBulk > 0): ?>
                 <button type="submit" name="apply_status" value="all" class="btn btn-default"
                         data-zm-confirm-title="Apply all"
                         data-zm-confirm-msg="Push every create + update from cPanel to Cloudflare? (CF-only records are NOT deleted.)">
@@ -1076,6 +1133,11 @@ if ($autoRefresh) {
           document.querySelectorAll('.zm-card').forEach(function(card) {
             var hidden = card.style.display === 'none';
             var status = card.dataset.status;
+            // Email-auth / verification rows never get swept up by a bulk
+            // selection — only an explicit click on their own checkbox.
+            if (card.dataset.protected === '1') {
+              return;
+            }
             var pickThis =
               (mode === 'visible' && !hidden && status !== 'identical') ||
               (mode === 'all' && status !== 'identical') ||
@@ -2071,6 +2133,8 @@ function zm_render_card(array $e, callable $h): string
         );
     }
 
+    $protected     = !empty($e['protected']);
+    $protectReason = (string) ($e['protect_reason'] ?? '');
     $locked      = !empty($e['locked']);
     $lockReason  = (string) ($e['lock_reason'] ?? '');
     $hideCheckbox = $status === DnsDiff::STATUS_IDENTICAL || $locked;
@@ -2103,13 +2167,27 @@ function zm_render_card(array $e, callable $h): string
         $locked ? 'Locked' : '',
     );
 
+    // Protected affordance — a shield pill with the reason (DKIM key, SPF
+    // record, …). Purely informational; the actual exclusion from bulk
+    // actions is driven by data-protected (JS) and the server-side guard.
+    $protectedBadge = '';
+    if ($protected) {
+        $protectedBadge = sprintf(
+            '<span class="zm-protected" title="%s"><i class="fas fa-shield-alt" aria-hidden="true"></i> protected%s</span>',
+            $h($protectReason !== ''
+                ? 'Protected (' . $protectReason . ') — excluded from bulk actions. Tick this row individually to act on it.'
+                : 'Protected — excluded from bulk actions. Tick this row individually to act on it.'),
+            $protectReason !== '' ? ' · ' . $h($protectReason) : '',
+        );
+    }
+
     return sprintf(
-        '<div class="zm-card status-%s" data-status="%s" data-key="%s" data-locked="%s">'
+        '<div class="zm-card status-%s" data-status="%s" data-key="%s" data-locked="%s" data-protected="%s">'
         . '<label class="zm-card-head">%s'
         . '<span class="zm-pill %s">%s</span>'
         . '<span class="zm-rtype">%s</span>'
         . '<span class="zm-rname">%s</span>'
-        . '%s'
+        . '%s%s'
         . '</label>'
         . '<div class="zm-card-body">%s%s</div>'
         . '</div>',
@@ -2117,11 +2195,13 @@ function zm_render_card(array $e, callable $h): string
         $h($status),
         $h($key),
         $locked ? '1' : '0',
+        $protected ? '1' : '0',
         $checkbox,
         $h($labelClass),
         $h($labelText),
         $h($type),
         $h($name),
+        $protectedBadge,
         $lockBtn,
         $body,
         $actions,

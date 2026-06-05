@@ -29,12 +29,16 @@ final class DnsDiff
 
     /**
      * @param list<DnsDiffEntry> $entries
+     * @param list<array{level: string, code: string, message: string}> $advisories
+     *        Zone-level notices for the UI banner (e.g. "this zone is served
+     *        by Cloudflare and your local copy is behind").
      */
     public function __construct(
         public readonly string $zoneName,
         public readonly string $zoneId,
         public readonly int $computedAt,
         public readonly array $entries,
+        public readonly array $advisories = [],
     ) {
     }
 
@@ -66,6 +70,7 @@ final class DnsDiff
             'zone_id' => $this->zoneId,
             'computed_at' => $this->computedAt,
             'summary' => $this->summary(),
+            'advisories' => $this->advisories,
             'entries' => array_map(static fn (DnsDiffEntry $e): array => $e->toArray(), $this->entries),
         ];
     }
