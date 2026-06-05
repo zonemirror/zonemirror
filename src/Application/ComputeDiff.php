@@ -9,6 +9,7 @@ use ZoneMirror\Domain\DnsDiffEntry;
 use ZoneMirror\Domain\DnsRecord;
 use ZoneMirror\Domain\RecordType;
 use ZoneMirror\Infrastructure\Cloudflare\CloudflareApiClient;
+use ZoneMirror\Infrastructure\Cloudflare\TxtContentNormalizer;
 use ZoneMirror\Infrastructure\Cpanel\BindZoneParser;
 use ZoneMirror\Infrastructure\Logging\FileLogger;
 use ZoneMirror\Infrastructure\Mapping\EmailDnsNormalizer;
@@ -50,6 +51,7 @@ final class ComputeDiff
         private readonly BindZoneParser $parser = new BindZoneParser(),
         private readonly EmailDnsNormalizer $normalizer = new EmailDnsNormalizer(),
         private readonly SystemConfigStorage $systemConfig = new SystemConfigStorage(),
+        private readonly TxtContentNormalizer $txt = new TxtContentNormalizer(),
     ) {
     }
 
@@ -260,7 +262,12 @@ final class ComputeDiff
 
         // Second pass: surviving locals pair with the next free remote as
         // "different", so the user sees an Update path rather than a
-        // create+delete pair for the row.
+        // create+delete pair for the row. For TXT we additionally require
+        // the remote to share the local's logical identity (SPF↔SPF,
+        // DKIM↔DKIM, same verification token↔same token) — two unrelated
+        // TXTs at one owner name (e.g. an SPF and a Google site-verification
+        // at the apex) must NOT marry into a single Update that would
+        // silently overwrite one with the other.
         foreach ($locals as $li => $local) {
             if (isset($localUsed[$li])) {
                 continue;
@@ -268,6 +275,9 @@ final class ComputeDiff
             $pairedRemote = null;
             foreach ($remotes as $ri => $remote) {
                 if (isset($remoteUsed[$ri])) {
+                    continue;
+                }
+                if ($local->type === RecordType::TXT && !$this->txtPairable($local, $remote)) {
                     continue;
                 }
                 $pairedRemote = $remote;
@@ -376,6 +386,19 @@ final class ComputeDiff
     }
 
     /**
+     * Whether a leftover local TXT and a leftover remote TXT under the same
+     * owner name are the same logical record (and so an Update candidate)
+     * rather than two independent TXTs that happen to share a name.
+     *
+     * @param array<string, mixed> $remote
+     */
+    private function txtPairable(DnsRecord $local, array $remote): bool
+    {
+        return $this->txt->identity($local->content ?? '')
+            === $this->txt->identity((string) ($remote['content'] ?? ''));
+    }
+
+    /**
      * @param array<string, mixed> $data
      */
     private function key(string $type, string $name, ?string $content, ?int $priority, array $data): string
@@ -414,11 +437,24 @@ final class ComputeDiff
         // rely on the structured comparison below.
         $usesStructuredData = $local->type === RecordType::SRV || $local->type === RecordType::CAA;
         if (!$usesStructuredData) {
-            if (($localPayload['content'] ?? null) !== ($remote['content'] ?? null)) {
+            $localContent = (string) ($localPayload['content'] ?? '');
+            $remoteContent = (string) ($remote['content'] ?? '');
+
+            if ($local->type === RecordType::TXT) {
+                // Cloudflare returns TXT content quoted (and segmented for
+                // long values); cPanel yields the bare concatenation. Fold
+                // both to the same canonical form — otherwise every TXT
+                // reads as different and unrelated apex TXTs get mis-paired.
+                if (
+                    $this->txt->canonicalForCompare($localContent)
+                    !== $this->txt->canonicalForCompare($remoteContent)
+                ) {
+                    return false;
+                }
+            } elseif (($localPayload['content'] ?? null) !== ($remote['content'] ?? null)) {
                 if (
                     $local->type === RecordType::CNAME
-                    && strtolower((string) ($localPayload['content'] ?? '')) ===
-                        strtolower((string) ($remote['content'] ?? ''))
+                    && strtolower($localContent) === strtolower($remoteContent)
                 ) {
                     // fall through; content is effectively identical
                 } else {
