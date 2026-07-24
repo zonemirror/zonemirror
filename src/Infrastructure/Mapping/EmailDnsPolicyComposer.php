@@ -141,9 +141,16 @@ final class EmailDnsPolicyComposer
             $lines = [];
         }
         foreach ($lines as $line) {
-            $line = trim($line);
-            if ($line !== '') {
-                $out[] = $line;
+            // A custom line may hold several space-separated mechanisms;
+            // split so each is stored as its own token rather than one opaque
+            // string the normaliser would splice verbatim. Drop reserved terms
+            // (`v=spf1`, any `all`) so a whole SPF record pasted here can't be
+            // merged mid-body — the corruption that once broke every zone.
+            $tokens = preg_split('/\s+/', trim($line));
+            foreach ($tokens === false ? [] : $tokens as $token) {
+                if ($token !== '' && preg_match('/^[+\-?~]?(v=spf1|all)$/i', $token) !== 1) {
+                    $out[] = $token;
+                }
             }
         }
         // De-dupe case-insensitively, preserving first occurrence (so a

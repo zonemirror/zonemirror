@@ -187,10 +187,23 @@ final class EmailDnsNormalizer
         // would still see it appended next to a pre-existing bare "ip4:X".
         $tokens = array_map(fn (string $t): string => $this->canonicaliseSpfToken($t), $tokens);
 
-        $renderedExtras = array_map(
-            fn (string $e): string => $this->canonicaliseSpfToken($this->renderTemplate($e, $zone)),
-            $extras,
-        );
+        // Flatten extras to individual mechanisms — a legacy stored extra
+        // may hold several space-separated tokens — then drop anything that
+        // must never sit mid-record. The head `v=spf1` and the single
+        // trailing `all` are owned by this method; an extras list polluted
+        // with a pasted SPF record (`v=spf1 … ~all`) must not be able to
+        // splice a second version tag or `all` into the body and break every
+        // managed zone at once.
+        $renderedExtras = [];
+        foreach ($extras as $extra) {
+            $parts = preg_split('/\s+/', trim($this->renderTemplate($extra, $zone)));
+            foreach ($parts === false ? [] : $parts as $token) {
+                if ($token === '' || $this->isReservedSpfTerm($token)) {
+                    continue;
+                }
+                $renderedExtras[] = $this->canonicaliseSpfToken($token);
+            }
+        }
 
         $present = array_map('strtolower', $tokens);
         foreach ($renderedExtras as $e) {
@@ -231,5 +244,16 @@ final class EmailDnsNormalizer
         }
 
         return $token;
+    }
+
+    /**
+     * A term that mergeSpf owns and must never accept as an extra: the
+     * `v=spf1` version tag (valid only at the record head) and any terminal
+     * `all` mechanism (mergeSpf re-attaches exactly one). Qualifier-prefixed
+     * forms (`+v=spf1`, `-all`, `~all`) count too.
+     */
+    private function isReservedSpfTerm(string $token): bool
+    {
+        return preg_match('/^[+\-?~]?(v=spf1|all)$/i', $token) === 1;
     }
 }
