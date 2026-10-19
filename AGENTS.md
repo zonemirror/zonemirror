@@ -1,6 +1,6 @@
 # Agent instructions
 
-<!-- tadu:rule v2 -->
+<!-- tadu:rule v3 -->
 
 ## Continuous TODO, Work Log, and History Coverage
 
@@ -36,7 +36,10 @@ once.
   - Resolution: Why it no longer applies, or what replaced it.
 ```
 
-Check the files with `tadu doctor .` when tadu is installed. Format: tadu spec v1,
-https://github.com/syntopica/tadu/blob/main/spec/todo-format-v1.md. The tadu-create and tadu-work
-skills automate these workflows and are optional.
+Close an item with `tadu close --match "<text>" --evidence "<proof>" --write` (`--resolution` for
+`[-]`, `--result` for the Result line); it moves the item and writes the entry in this shape. Run
+`tadu doctor .` after changing these files and before committing. If `tadu` is not on PATH, install
+it as https://github.com/syntopica/tadu#install describes, or report that it is missing. Format:
+tadu spec v1, https://github.com/syntopica/tadu/blob/main/spec/todo-format-v1.md. The tadu-create
+and tadu-work skills automate these workflows and are optional.
 <!-- /tadu:rule -->
