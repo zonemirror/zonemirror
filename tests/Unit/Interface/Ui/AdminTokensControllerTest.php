@@ -66,11 +66,22 @@ final class AdminTokensControllerTest extends TestCase
     // GET path
     // -----------------------------------------------------------------
 
+    public function testHandleRefusesWhenNotRoot(): void
+    {
+        $controller = new AdminTokensController($this->tokens, null, static fn (): bool => false);
+
+        $vm = $controller->handle('GET', []);
+
+        self::assertFalse($vm['allowed']);
+        self::assertSame(['Admin tokens can only be managed as root.'], $vm['errors']);
+    }
+
     public function testHandleGetReturnsEmptyViewModelWhenNoTokensExist(): void
     {
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
 
         $vm = $controller->handle('GET', []);
@@ -106,6 +117,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
 
         $vm = $controller->handle('GET', []);
@@ -128,6 +140,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
 
         // Seed session so Csrf::verify has something stored to fail against.
@@ -152,6 +165,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -195,7 +209,7 @@ final class AdminTokensControllerTest extends TestCase
             }
         };
         $indexer = $this->makeIndexer(static fn (): CloudflareApiClient => $client);
-        $controller = new AdminTokensController($this->tokens, $indexer);
+        $controller = new AdminTokensController($this->tokens, $indexer, static fn (): bool => true);
 
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -227,7 +241,7 @@ final class AdminTokensControllerTest extends TestCase
                 throw new RuntimeException('factory exploded');
             },
         );
-        $controller = new AdminTokensController($this->tokens, $throwingIndexer);
+        $controller = new AdminTokensController($this->tokens, $throwingIndexer, static fn (): bool => true);
 
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -251,6 +265,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -271,6 +286,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -291,6 +307,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -335,6 +352,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer(static fn (): CloudflareApiClient => $client),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -360,6 +378,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -401,6 +420,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer(static fn (): CloudflareApiClient => $client),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -425,7 +445,7 @@ final class AdminTokensControllerTest extends TestCase
                 throw new RuntimeException('boom: indexer failed');
             },
         );
-        $controller = new AdminTokensController($this->tokens, $throwingIndexer);
+        $controller = new AdminTokensController($this->tokens, $throwingIndexer, static fn (): bool => true);
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
         $vm = $controller->handle('POST', [
@@ -444,6 +464,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -477,6 +498,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -498,6 +520,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -520,6 +543,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -537,6 +561,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 
@@ -557,6 +582,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
 
         $vm = $controller->handle('GET', []);
@@ -571,6 +597,7 @@ final class AdminTokensControllerTest extends TestCase
         $controller = new AdminTokensController(
             $this->tokens,
             $this->makeIndexer($this->failingFactory()),
+            static fn (): bool => true,
         );
         $_SESSION[self::CSRF_SESSION_KEY] = self::KNOWN_CSRF;
 

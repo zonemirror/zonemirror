@@ -13,6 +13,15 @@
 
 ## 2026
 
+### 2026-11
+
+- [x] 2026-11-15 — **CI:** Fix 19 AdminTokensControllerTest failures on main since 2026-10-13.
+  - Result: `AdminTokensController` read `posix_geteuid()` directly, so tests passed only as root.
+    The root check is now an injectable closure (default unchanged); tests inject it and a non-root
+    test was added.
+  - Evidence: `composer run test` as uid 501 passes (695 tests), lint:php, analyse, prettier and
+    shellcheck clean locally.
+
 ### 2026-10
 
 - [x] 2026-10-21 — **Daily round:** Resolved 2026-09-12: prettier tripped on the untracked
