@@ -37,11 +37,17 @@ final class AdminTokensController
 {
     private ?AdminTokenStorage $storage;
     private ?IndexZones $indexer;
+    /** @var \Closure(): bool */
+    private \Closure $isRoot;
 
-    public function __construct(?AdminTokenStorage $storage = null, ?IndexZones $indexer = null)
+    /**
+     * @param (\Closure(): bool)|null $isRoot Test seam; defaults to the process effective uid.
+     */
+    public function __construct(?AdminTokenStorage $storage = null, ?IndexZones $indexer = null, ?\Closure $isRoot = null)
     {
         $this->storage = $storage;
         $this->indexer = $indexer;
+        $this->isRoot = $isRoot ?? static fn (): bool => !function_exists('posix_geteuid') || posix_geteuid() === 0;
     }
 
     /**
@@ -50,7 +56,7 @@ final class AdminTokensController
      */
     public function handle(string $method, array $post): array
     {
-        if (function_exists('posix_geteuid') && posix_geteuid() !== 0) {
+        if (!($this->isRoot)()) {
             return [
                 'allowed' => false,
                 'tokens' => [],

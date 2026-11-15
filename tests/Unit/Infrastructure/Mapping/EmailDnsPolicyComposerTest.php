@@ -153,4 +153,28 @@ final class EmailDnsPolicyComposerTest extends TestCase
         $out = $this->composer->composeSpfExtras(['google', 'bogus_provider'], '', null);
         self::assertSame(['+include:_spf.google.com'], $out);
     }
+
+    public function testCustomLineWithSeveralMechanismsIsSplitIntoTokens(): void
+    {
+        $out = $this->composer->composeSpfExtras(
+            [],
+            '+ip4:198.51.100.7 +include:mailgun.org',
+            null,
+        );
+        self::assertSame(['+ip4:198.51.100.7', '+include:mailgun.org'], $out);
+    }
+
+    public function testPastedWholeSpfRecordDropsVersionTagAndAll(): void
+    {
+        // The exact operator mistake behind the incident: a full SPF policy
+        // pasted into the custom-extras box. The version tag and terminal
+        // `all` must be stripped so only real mechanisms survive; otherwise
+        // they get spliced mid-record and permerror every managed zone.
+        $out = $this->composer->composeSpfExtras(
+            [],
+            'v=spf1 +a +include:_spf.google.com ~all',
+            null,
+        );
+        self::assertSame(['+a', '+include:_spf.google.com'], $out);
+    }
 }

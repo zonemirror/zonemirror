@@ -97,6 +97,58 @@ final class EmailDnsNormalizerTest extends TestCase
         );
     }
 
+    public function testSpfExtrasCannotSpliceVersionTagOrAllIntoBody(): void
+    {
+        // Reproduces the incident where a full SPF record pasted into the
+        // custom-extras textarea landed in stored `spf_extras` as `+v=spf1`
+        // and `+a`. Splicing the version tag mid-record is a permerror. The
+        // normaliser must drop reserved terms and keep only the real
+        // mechanism, so the output stays a single valid policy.
+        $record = new DnsRecord(
+            RecordType::TXT,
+            'example.com',
+            'v=spf1 ip4:1.2.3.4 +a +mx ~all',
+            14400,
+            null,
+            null,
+            [],
+        );
+
+        $out = $this->normalizer->normalize($record, 'example.com', [
+            'spf_extras' => ['+v=spf1', '+a:mail.{domain}'],
+        ]);
+
+        self::assertSame(
+            'v=spf1 +ip4:1.2.3.4 +a +mx +a:mail.example.com ~all',
+            $out->content,
+        );
+    }
+
+    public function testSpfExtraHoldingAWholePastedRecordIsFlattenedAndCleaned(): void
+    {
+        // A legacy stored extra may be one opaque multi-token string. It must
+        // be split, its `v=spf1`/`all` dropped, and only genuine mechanisms
+        // merged — never spliced verbatim into the body.
+        $record = new DnsRecord(
+            RecordType::TXT,
+            'example.com',
+            'v=spf1 ip4:1.2.3.4 ~all',
+            14400,
+            null,
+            null,
+            [],
+        );
+
+        $out = $this->normalizer->normalize($record, 'example.com', [
+            'spf_extras' => ['v=spf1 +include:_spf.google.com ~all'],
+        ]);
+
+        self::assertSame(
+            'v=spf1 +ip4:1.2.3.4 +include:_spf.google.com ~all',
+            $out->content,
+        );
+    }
+
     public function testSpfMergeIsIdempotent(): void
     {
         $record = new DnsRecord(
