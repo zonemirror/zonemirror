@@ -1,0 +1,9 @@
+{
+  "tadu": 2,
+  "categories": {
+    "ci": "CI",
+    "daily-round": "Daily round",
+    "moved-from-todo-md-2026-10-12": "Moved from TODO.md (2026-10-12)",
+    "routed-from-p-todo-md-2026-10-03": "Routed from `~/p/TODO.md` (2026-10-03)"
+  }
+}

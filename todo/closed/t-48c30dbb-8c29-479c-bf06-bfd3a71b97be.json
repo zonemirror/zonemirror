@@ -1,0 +1,14 @@
+{
+  "tadu": 2,
+  "id": "t-48c30dbb-8c29-479c-bf06-bfd3a71b97be",
+  "title": "Fix 19 AdminTokensControllerTest failures on main since 2026-10-13",
+  "state": "done",
+  "category": "ci",
+  "type": "untriaged",
+  "priority": "untriaged",
+  "closed": "2026-11-15",
+  "result": "`AdminTokensController` read `posix_geteuid()` directly, so tests passed only as root. The root check is now an injectable closure (default unchanged); tests inject it and a non-root test was added.",
+  "evidence": [
+    "`composer run test` as uid 501 passes (695 tests), lint:php, analyse, prettier and shellcheck clean locally."
+  ]
+}

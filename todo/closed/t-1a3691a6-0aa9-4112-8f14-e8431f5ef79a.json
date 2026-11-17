@@ -1,0 +1,18 @@
+{
+  "tadu": 2,
+  "id": "t-1a3691a6-0aa9-4112-8f14-e8431f5ef79a",
+  "title": "Resolved 2026-09-12: prettier tripped on the untracked",
+  "state": "done",
+  "category": "daily-round",
+  "type": "untriaged",
+  "priority": "untriaged",
+  "notes": [
+    "    `.serena/project.yml`; `.serena/` is in .prettierignore and the staged upgrade went in as",
+    "    473cc9f, pushed."
+  ],
+  "closed": "2026-10-21",
+  "result": "Verified the existing fix and removed the stale open reminder.",
+  "evidence": [
+    "On 2026-10-21, Prettier --file-info .serena/project.yml returned ignored: true; .prettierignore contains .serena/ and git merge-base --is-ancestor 473cc9f HEAD exited 0."
+  ]
+}

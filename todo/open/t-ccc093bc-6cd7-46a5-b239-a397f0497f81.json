@@ -1,0 +1,14 @@
+{
+  "tadu": 2,
+  "id": "t-ccc093bc-6cd7-46a5-b239-a397f0497f81",
+  "title": "Dependabot #3 `actions/setup-node` 6 to 7",
+  "state": "pending",
+  "category": "routed-from-p-todo-md-2026-10-03",
+  "type": "untriaged",
+  "priority": "untriaged",
+  "notes": [
+    "open since 2026-07-16 (review requested), still",
+    "",
+    "    open 2026-10-03. Merge or close. Split out of a cross-repo Dependabot line in `~/p/TODO.md`."
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "tadu": 2,
+  "id": "t-49327bb7-0f95-46af-870d-676fbe40906d",
+  "title": "<!-- daily-tasks:COMMIT_FAIL --> **COMMIT_FAIL** (first seen 2026-09-12, last seen",
+  "state": "done",
+  "category": "moved-from-todo-md-2026-10-12",
+  "type": "untriaged",
+  "priority": "untriaged",
+  "notes": [
+    "    2026-09-12): the upgrade is staged but the commit hook rejected it (after 0 TS4111 rewrites).",
+    "    Decisive line: `✗ Prettier failed. Fix with: npm run format:prettier`. Re-run:",
+    "    `bash ~/p/bin/daily/ncu-update-repo.sh ~/p/zonemirror /tmp/logs`."
+  ],
+  "closed": "2026-11-17",
+  "result": "<!-- daily-tasks:COMMIT_FAIL --> **COMMIT_FAIL** (first seen 2026-09-12, last seen",
+  "evidence": ["legacy item migrated to format 2 without a recorded evidence"]
+}
