@@ -9,6 +9,7 @@
   "notes": [
     "open since 2026-07-16 (review requested), still",
     "",
-    "    open 2026-10-03. Merge or close. Split out of a cross-repo Dependabot line in `~/p/TODO.md`."
+    "    open 2026-10-03. Merge or close. Split out of a cross-repo Dependabot line in `~/p/TODO.md`.",
+    "2026-11-27 mail pass: GitHub (notifications@github.com, 2026-11-26 23:14 UTC) \"@dependabot requested your review on: zonemirror/zonemirror#5 composer: update phpunit/phpunit requirement from ^11.5 to ^13.4 as a code owner\"; review Dependabot #3 and #5 together."
   ]
 }
