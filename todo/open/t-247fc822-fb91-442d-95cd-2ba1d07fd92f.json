@@ -1,0 +1,14 @@
+{
+  "tadu": 2,
+  "id": "t-247fc822-fb91-442d-95cd-2ba1d07fd92f",
+  "title": "Make the pre-commit PHP lint run on the local PHP 8.6 runtime",
+  "state": "pending",
+  "category": "ops",
+  "type": "task",
+  "priority": "normal",
+  "kind": "task",
+  "created": "2026-11-27",
+  "notes": [
+    "2026-11-27: git commit failed in lint:php: 'PHP CS Fixer currently supports PHP syntax only up to PHP 8.5, current PHP version: 8.6.0' (php-cs-fixer 3.95.2). Every commit fails until fixed; worked around once with PHP_CS_FIXER_IGNORE_ENV=1. Smallest fix: set PHP_CS_FIXER_IGNORE_ENV=1 in the composer lint:php script or run the fixer on PHP 8.2/8.5."
+  ]
+}
