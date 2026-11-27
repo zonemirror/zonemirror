@@ -15,6 +15,8 @@ $finder = PhpCsFixer\Finder::create()
 
 return (new PhpCsFixer\Config())
     ->setRiskyAllowed(true)
+    // The dev Macs run PHP 8.6, newer than php-cs-fixer 3.95 supports; the code itself targets 8.2.
+    ->setUnsupportedPhpVersionAllowed(true)
     ->setUsingCache(true)
     ->setRules([
         '@PSR12' => true,
